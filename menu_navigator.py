@@ -35,7 +35,7 @@ def locate_on_all_screens(image_path, confidence_val=0.8):
             return (center_x, center_y)
             
     except Exception as e:
-        print(f"Error in multi-monitor search: {e}")
+        print(f"Error in multi-monitor search: {repr(e)}")
         
     return None
 
@@ -49,6 +49,14 @@ def navigate_to_mr():
     main_btn_img = os.path.join(assets_dir, 'maintenance_btn.png')
     sub_btn_img = os.path.join(assets_dir, 'mr_submenu_btn.png')
     
+    # Optimization: Check if 'Inventory' is already visible (M&R expanded)
+    inv_img = os.path.join(assets_dir, 'inventory_menu.png')
+    if os.path.exists(inv_img):
+        inv_loc = locate_on_all_screens(inv_img, confidence_val=0.8)
+        if inv_loc:
+            print("Inventory menu is already visible. Skipping M&R click.")
+            return
+
     # Check if assets exist
     if not os.path.exists(main_btn_img):
         print(f"Error: Image not found at {main_btn_img}")
@@ -71,14 +79,14 @@ def navigate_to_mr():
     
     # Retry loop for Main Button
     main_loc = None
-    for i in range(10): # Try for 10 seconds
+    for i in range(3): # Try for 3 seconds
         main_loc = locate_on_all_screens(main_btn_img, confidence_val=0.8)
                 
         if main_loc:
             break
         
         time.sleep(1)
-        print(f"Searching... ({i+1}/10)")
+        print(f"Searching... ({i+1}/3)")
         
     if not main_loc:
         print("Failed to find 'Maintenance & Repair' button on any screen.")
@@ -122,12 +130,12 @@ def click_inventory():
     
     # Retry loop
     inv_loc = None
-    for i in range(10): 
+    for i in range(3): 
         inv_loc = locate_on_all_screens(inv_btn_img, confidence_val=0.8)     
         if inv_loc:
             break
         time.sleep(1)
-        print(f"Searching for Inventory... ({i+1}/10)")
+        print(f"Searching for Inventory... ({i+1}/3)")
         
     if inv_loc:
         print(f"Found Inventory at {inv_loc}. Clicking...")
@@ -141,6 +149,15 @@ def click_purchase_request():
     Finds and clicks the 'Purchase Request' menu item.
     """
     assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
+    
+    # Optimization: Check if 'Add' button is visible (Form already open)
+    add_btn_path = os.path.join(assets_dir, 'add_button.png')
+    if os.path.exists(add_btn_path):
+        add_loc = locate_on_all_screens(add_btn_path, confidence_val=0.8)
+        if add_loc:
+            print("Add button visible (PR Form open). Skipping Purchase Request menu click.")
+            return
+
     pr_btn_img = os.path.join(assets_dir, 'purchase_request_menu.png')
     
     if not os.path.exists(pr_btn_img):
@@ -151,12 +168,12 @@ def click_purchase_request():
     
     # Retry loop
     pr_loc = None
-    for i in range(10): 
+    for i in range(3): 
         pr_loc = locate_on_all_screens(pr_btn_img, confidence_val=0.8)     
         if pr_loc:
             break
         time.sleep(1)
-        print(f"Searching for Purchase Request... ({i+1}/10)")
+        print(f"Searching for Purchase Request... ({i+1}/3)")
         
     if pr_loc:
         print(f"Found Purchase Request at {pr_loc}. Clicking...")
@@ -255,12 +272,12 @@ def update_need_by_date():
     
     # Retry loop
     lbl_loc = None
-    for i in range(10): 
+    for i in range(3): 
         lbl_loc = locate_on_all_screens(need_by_img, confidence_val=0.7)     
         if lbl_loc:
             break
         time.sleep(1)
-        print(f"Searching for Need By label... ({i+1}/10)")
+        print(f"Searching for Need By label... ({i+1}/3)")
         
     if lbl_loc:
         print(f"Found Need By Label at {lbl_loc}. Accessing field...")
@@ -346,12 +363,12 @@ def set_unit_price_contract(enable=False):
     
     # Retry loop
     lbl_loc = None
-    for i in range(10): 
+    for i in range(3): 
         lbl_loc = locate_on_all_screens(lbl_img, confidence_val=0.8)     
         if lbl_loc:
             break
         time.sleep(1)
-        print(f"Searching for Unit Price label... ({i+1}/10)")
+        print(f"Searching for Unit Price label... ({i+1}/3)")
         
     if lbl_loc:
         print(f"Found Unit Price Label at {lbl_loc}. Setting to Y...")
@@ -400,13 +417,13 @@ def set_account_code(code_text):
     
     # Retry loop
     lbl_loc = None
-    for i in range(10): 
+    for i in range(3): 
         # Increased confidence to 0.93 to prevent matching similar labels on the left (e.g. Account Name)
         lbl_loc = locate_on_all_screens(lbl_img, confidence_val=0.93)     
         if lbl_loc:
             break
         time.sleep(1)
-        print(f"Searching for Account Code label... ({i+1}/10)")
+        print(f"Searching for Account Code label... ({i+1}/3)")
         
     if lbl_loc:
         print(f"Found Account Code Label at {lbl_loc} (X={lbl_loc[0]}).")
@@ -433,27 +450,58 @@ def set_account_code(code_text):
         if "0501040106" in code_text:
             target_asset = "acc_code_0501040106.png"
         
+        # Account Code Index Map (Based on user provided list structure)
+        # 0501030000 -> Index 0
+        # 0501030100 -> Index 1
+        # 0501030101 -> Index 2
+        # 0501030102 -> Index 3 (ATC)
+        # 0501030103 -> Index 4
+        # 0501030104 -> Index 5 (YT)
+        # ...
+        # 0501040106 -> Last Item (Special Case 'End' Key)
+        
+        INDEX_MAP = {
+            "0501030102": 3,
+            "0501030104": 5, 
+        }
+
+        # Handle specific visual target (Last Item)
         if "0501040106" in code_text:
-            # Optimized Strategy for '0501040106' (Last item)
-            # Visual search was unreliable (sliding cursor).
-            # Index navigation was rejected.
-            # Typing/Pasting failing.
-            # 'End' key jumps to bottom of list.
-            print(f"Target is last item ({code_text}). Using 'End' key strategy.")
-            
-            # Click to Open
-            # +60 hits Label Text. +100 hits Next Menu.
-            # Trying +85 to hit the Input Box/Dropdown Arrow.
-            click_x = lbl_loc[0] + 85
-            pyautogui.click(click_x, lbl_loc[1], duration=0.5)
-            time.sleep(1.0)
-            
-            # Navigate
-            pyautogui.press('end')
-            time.sleep(0.5)
-            pyautogui.press('enter')
-            print("Selected via 'End' key.")
-            return
+             print(f"Target is last item ({code_text}). Using 'End' key strategy.")
+             click_x = lbl_loc[0] + 85
+             pyautogui.click(click_x, lbl_loc[1], duration=0.5)
+             time.sleep(1.0)
+             pyautogui.press('end')
+             time.sleep(0.5)
+             pyautogui.press('enter')
+             return
+
+        # Handle Mapped Index Targets (ATC, YT etc.)
+        matched_index = None
+        for key, idx in INDEX_MAP.items():
+            if key in code_text:
+                matched_index = idx
+                break
+        
+        if matched_index is not None:
+             print(f"Target is mapped at index {matched_index} ({code_text}). Using Index Navigation.")
+             
+             # Click to Open Dropdown (Optimized Offset +85px)
+             click_x = lbl_loc[0] + 85
+             pyautogui.click(click_x, lbl_loc[1], duration=0.5)
+             time.sleep(1.0) # Wait for list to open
+             
+             # Navigate
+             pyautogui.press('home') # Ensure start at top
+             time.sleep(0.3)
+             
+             for _ in range(matched_index):
+                 pyautogui.press('down')
+                 time.sleep(0.1) # Visual feedback for user ("Scroll down")
+                 
+             pyautogui.press('enter')
+             print("Selected via Index Navigation.")
+             return
 
         # Fallback for others (Paste)
         print(f"No specific strategy for '{code_text}'. Falling back to Paste.")

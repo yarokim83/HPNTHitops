@@ -2,8 +2,8 @@ import cv2
 import os
 
 def create_code_asset():
-    # Source image (uploaded list screenshot)
-    src_path = r"C:\Users\baewoong.kim\.gemini\antigravity\brain\71d054ab-f771-4289-b793-b10782a9ddb3\uploaded_media_1_1769583613930.png"
+    # Source image (uploaded list screenshot 0)
+    src_path = r"C:\Users\baewoong.kim\.gemini\antigravity\brain\71d054ab-f771-4289-b793-b10782a9ddb3\uploaded_media_0_1769583416839.png"
     
     if not os.path.exists(src_path):
         print(f"File not found: {src_path}")
