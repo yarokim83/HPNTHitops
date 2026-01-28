@@ -66,6 +66,7 @@ def perform_login(password):
                 print(f"Error interacting with window: {e}")
         else:
             print("Detected window does not appear to be the Login screen. Assuming already logged in.")
+            return True
             
     else:
         print("Could not find application window automatically. Assuming active window is correct or app failed to launch.")
