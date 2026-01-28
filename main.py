@@ -2,6 +2,8 @@ import subprocess
 import os
 import sys
 import login_manager
+import menu_navigator
+import time
 
 def launch_hitops():
     """
@@ -25,6 +27,11 @@ def launch_hitops():
         # For this version, please replace 'YOUR_PASSWORD_HERE' with your actual password.
         password = "fdjk213!@"  
         login_manager.perform_login(password)
+        
+        # --- Menu Navigation ---
+        menu_navigator.navigate_to_mr()
+        time.sleep(2) # Wait for new screen/menu to load
+        menu_navigator.click_inventory()
         
     except Exception as e:
         print(f"Failed to launch application: {e}")
