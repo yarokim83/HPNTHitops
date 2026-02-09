@@ -208,3 +208,21 @@ def find_maintenance_root_menu(screenshot):
                 return box
     
     return None
+
+def find_maintenance_tile(screenshot):
+    """
+    Finds the 'Maintenance & Repair' tile on main screen.
+    Searches FULL screen for text within the tile.
+    """
+    # Keywords that appear on the tile
+    targets = ["Maintenance", "Repair", "M&R"]
+    
+    for text in targets:
+        box = find_text_in_image(screenshot, text, region="full")
+        if box:
+            # Tile is usually in lower half of screen (Y > 200)
+            if box.top > 150:
+                print(f"OCR: Found Tile '{text}' at ({box.left}, {box.top})")
+                return box
+    
+    return None

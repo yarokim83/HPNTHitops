@@ -5,21 +5,103 @@ import login_manager
 import menu_navigator
 import time
 import pyautogui
+import win32api
+import win32con
+import tkinter as tk
+from tkinter import simpledialog, messagebox
+from tkinter import ttk
 
-def launch_hitops():
+def run_automation(pr_description, is_unit_price, account_code, part_no=None):
     """
-    Launch Hitops3.exe from the specified path.
+    Core automation logic, decoupled from UI.
+    Executing this function runs the full PR creation flow.
     """
     exe_path = r"C:\Program Files (x86)\Hyundai-UNI\HITOPSIII\Hitops3.exe"
-    
     if not os.path.exists(exe_path):
         print(f"Error: Executable not found at {exe_path}")
         return
 
-    import tkinter as tk
-    from tkinter import simpledialog, messagebox
-    from tkinter import ttk
+    try:
+        # 1. Launch & Login Logic
+        # Check if already running (Skip Launch/Login)
+        if menu_navigator.is_hitops_running():
+             print("Skipping Launch & Login (Hitops3.exe is running).")
+        else:
+             # 3. Launch Hitops3
+             working_dir = os.path.dirname(exe_path)
+             print(f"Launching {exe_path}...")
+             subprocess.Popen(exe_path, cwd=working_dir)
+             
+             # 4. Perform Login
+             password = "fdjk213!@"
+             print("Waiting for application to load (Searching for 30 seconds)...")
+             if login_manager.perform_login(password):
+                 print("Login successful. Proceeding...")
+             else:
+                 print("Login failed or timed out.")
+                 return
 
+        # 5. Smart Menu Navigation (Parallel/Event-Driven)
+        print("Executing Smart Navigation...")
+        if not menu_navigator.smart_navigate_to_pr():
+             print("Smart Navigation failed or timed out.")
+             return
+             
+        # Form is now presumably open. Appending verify logic or wait.
+        time.sleep(2) 
+        
+        # 6. Click Add Button
+        time.sleep(0.5)
+        menu_navigator.click_add_button()
+
+        # --- Enter PR Description ---
+        time.sleep(1.0) # Wait for form to open
+        menu_navigator.enter_pr_description(pr_description)
+        time.sleep(0.5)
+        menu_navigator.update_need_by_date()
+        time.sleep(0.5)
+        menu_navigator.set_unit_price_contract(is_unit_price)
+        time.sleep(0.5)
+        menu_navigator.set_account_code(account_code)
+        
+        # New: Enter Part No (if provided and valid)
+        if part_no and len(str(part_no).strip()) > 3:
+            time.sleep(0.5)
+            menu_navigator.enter_part_no(part_no)
+        else:
+            print(f"Skipping Part No input: '{part_no}' is too short or potentially unsafe.")
+        
+        # 7. Pause and Move to Next Step
+        print("Initial form filling complete. Waiting for user confirmation...")
+        messagebox.showinfo("Continue?", "Please check the form. Click OK to proceed to 'Inventory' menu.")
+        
+        # 8. Re-navigate to Inventory
+        print("Re-activating Main Window and clicking Inventory...")
+        time.sleep(1)
+        menu_navigator.click_inventory()
+        print("Inventory menu clicked (Round 2).")
+        
+        # 9. Click Approve Purchase Request
+        time.sleep(1)
+        menu_navigator.click_approve_purchase_request()
+        
+        # 10. Program complete
+        print("\n" + "="*60)
+        print("✓ Program execution complete!")
+        print("✓ Successfully navigated to Approve Purchase Request menu")
+        print("="*60)
+        print("\nPlease manually complete the approval process.")
+        messagebox.showinfo("Success", "Navigation complete!\n\nThe Approve Purchase Request menu is now open.\nPlease manually select and approve your PR.")
+        return
+
+    except Exception as e:
+        print(f"Failed to run automation: {e}")
+        raise e
+
+def launch_hitops():
+    """
+    Legacy Entry Point: User Input via Dialog -> calling run_automation
+    """
     # Custom Dialog to get Description + Checkbox + Account Code
     def get_user_input():
         root = tk.Tk()
@@ -36,7 +118,7 @@ def launch_hitops():
         unit_price_var = tk.BooleanVar()
         account_code_var = tk.StringVar()
         
-        # Account Codes (Transcribed from screenshot)
+        # Account Codes
         account_codes = [
             "0501030000/수선유지비",
             "0501030100/수선유지비",
@@ -126,90 +208,9 @@ def launch_hitops():
         if not pr_description:
             print("No description entered. Exiting.")
             return
-
-        print(f"Description: {pr_description}, Unit Price: {is_unit_price}, Account Code: {account_code}")
-
-        # 2. Check if already running (Skip Launch/Login)
-        if menu_navigator.is_hitops_running():
-             print("Skipping Launch & Login (Hitops3.exe is running).")
-        else:
-             # 3. Launch Hitops3
-             working_dir = os.path.dirname(exe_path)
-             print(f"Launching {exe_path}...")
-             subprocess.Popen(exe_path, cwd=working_dir)
-             
-             # 4. Perform Login
-             password = "fdjk213!@"
-             # perform_login now handles waiting internally
-             print("Waiting for application to load (Searching for 30 seconds)...")
-             if login_manager.perform_login(password):
-                 print("Login successful. Proceeding...")
-             else:
-                 print("Login failed or timed out.")
-                 return
-
-        # 5. Smart Menu Navigation (Parallel/Event-Driven)
-        print("Executing Smart Navigation...")
-        if not menu_navigator.smart_navigate_to_pr():
-             print("Smart Navigation failed or timed out.")
-             return
-             
-        # Form is now presumably open. Appending verify logic or wait.
-        time.sleep(2) 
-        
-        # 6. Click Add Button (Continuing workflow)
-        
-        # 6. Click Add Button
-        # Optimized wait
-        time.sleep(0.5)
-        menu_navigator.click_add_button()
-
-        # --- Enter PR Description ---
-        time.sleep(1.0) # Wait for form to open
-        menu_navigator.enter_pr_description(pr_description)
-        time.sleep(0.5) # Reduced from 2
-        menu_navigator.update_need_by_date()
-        time.sleep(0.5)
-        menu_navigator.set_unit_price_contract(is_unit_price)
-        time.sleep(0.5)
-        menu_navigator.set_account_code(account_code)
-        
-        # New: Enter Part No (if provided and valid)
-        # HI-TOPS crashes if Part No is '1', empty, or generic text requiring massive DB search.
-        # Only enter if length > 3 to be safe.
-        if part_no and len(str(part_no).strip()) > 3:
-            time.sleep(0.5)
-            menu_navigator.enter_part_no(part_no)
-        else:
-            print(f"Skipping Part No input: '{part_no}' is too short or potentially unsafe.")
-        
-        # 7. Pause and Move to Next Step
-        print("Initial form filling complete. Waiting for user confirmation...")
-        messagebox.showinfo("Continue?", "Please check the form. Click OK to proceed to 'Inventory' menu.")
-        
-        # 8. Re-navigate to Inventory
-        print("Re-activating Main Window and clicking Inventory...")
-        # Since we don't have the window handle easily accessible here without more code,
-        # we rely on the user having closed the popup or the main window being visible.
-        # But to be safe, we can try to find the Hitops window again if needed, 
-        # or just rely on the click logic finding the image.
-        # Ideally, we should click the title bar or taskbar if we could, but 'click_inventory' scans all screens.
-        time.sleep(1)
-        menu_navigator.click_inventory()
-        print("Inventory menu clicked (Round 2).")
-        
-        # 9. Click Approve Purchase Request
-        time.sleep(1)
-        menu_navigator.click_approve_purchase_request()
-        
-        # 10. Program complete - user will manually approve
-        print("\n" + "="*60)
-        print("✓ Program execution complete!")
-        print("✓ Successfully navigated to Approve Purchase Request menu")
-        print("="*60)
-        print("\nPlease manually complete the approval process.")
-        messagebox.showinfo("Success", "Navigation complete!\n\nThe Approve Purchase Request menu is now open.\nPlease manually select and approve your PR.")
-        return
+            
+        # 2. Run Automation
+        run_automation(pr_description, is_unit_price, account_code, part_no)
 
     except Exception as e:
         print(f"Failed to launch application: {e}")

@@ -18,6 +18,8 @@ def get_app_window(partial_title_list):
                      continue
                  if "explorer" in title.lower() or "파일 탐색기" in title.lower():
                      continue
+                 if "everything" in title.lower():
+                     continue
                  return hwnd, title
     return None, None
 
@@ -82,9 +84,9 @@ def perform_login(password):
                 pyautogui.press('delete')
                 time.sleep(0.1)
 
-                # 2. Copy and Paste
-                pyperclip.copy(password)
-                pyautogui.hotkey('ctrl', 'v')
+                # 2. Type Password directly (More reliable than Paste)
+                # pyautogui.write handles special chars fine usually
+                pyautogui.write(password, interval=0.05)
                 time.sleep(0.5)
                 
                 pyautogui.press('enter')

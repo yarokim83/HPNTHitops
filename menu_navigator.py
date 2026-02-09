@@ -706,19 +706,27 @@ def select_pr_in_approval_list(target_description):
 
 def is_hitops_running():
     """
-    Checks if Hitops3.exe process is running using tasklist.
-    Returns True if running, False otherwise.
+    Checks if Hitops3 application is running.
+    Prioritizes Window Detection over Process List (Process might be a zombie).
+    Returns True if Window Found or Process detected.
     """
+    # 1. Check for visible window first (Most reliable for automation)
+    rect, hwnd = roi_helpers.get_hitops_window_rect()
+    if hwnd:
+        print("Hitops3 window detected via Window API.")
+        return True
+
+    # 2. Fallback: Check process list (e.g. if minimized to tray or loading)
     try:
         # Run tasklist and capture output (Binary check to avoid encoding issues)
         output = subprocess.check_output('tasklist /FI "IMAGENAME eq Hitops3.exe"', shell=True)
-        if b"Hitops3.exe" in output:
-            print("Hitops3.exe process detected.")
+        if b"Hitops3.exe" in output or b"Hitops3" in output:
+            print("Hitops3.exe process detected (No window found yet).")
             return True
     except Exception as e:
         print(f"Error checking process list: {e}")
         
-    print("Hitops3.exe process not found.")
+    print("Hitops3 application not found (No Window, No Process).")
     return False
 
 from PIL import Image, ImageOps
@@ -784,29 +792,32 @@ def safe_locate(image_path, screenshot, confidence=0.8):
 
 def check_popup_by_title():
     """
-    Checks if a popup with title 'Authority Access Error' exists using win32gui.
-    If found, focuses it and presses Enter.
+    Checks if a popup with error-related title exists using win32gui.
+    If found, focuses it and presses Enter/Escape to dismiss.
     """
-    target_title = "Authority Access Error"
+    # Multiple keywords to catch various error popups
+    error_keywords = ["Authority", "Access", "Error", "Warning", "Alert", "권한", "오류"]
     
     def enum_handler(hwnd, _):
         if win32gui.IsWindowVisible(hwnd):
             title = win32gui.GetWindowText(hwnd)
-            if target_title in title:
-                print(f"Blocking Popup detected by Title: '{title}'. Dismissing...")
-                try:
-                    # Generic Windows dismissal
-                    win32gui.SetForegroundWindow(hwnd)
-                    time.sleep(0.2)
-                    pyautogui.press('enter')
-                    return True # Stop enumeration? No, enum returns bool
-                except Exception as e:
-                    print(f"Failed to dismiss popup: {e}")
-                    # Try sending close message
+            # Check if any keyword is in the title
+            for keyword in error_keywords:
+                if keyword.lower() in title.lower():
+                    print(f"Blocking Popup detected by Title: '{title}'. Dismissing...")
                     try:
-                        win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-                    except:
-                        pass
+                        # Generic Windows dismissal
+                        win32gui.SetForegroundWindow(hwnd)
+                        time.sleep(0.2)
+                        pyautogui.press('enter')
+                        return True # Stop enumeration? No, enum returns bool
+                    except Exception as e:
+                        print(f"Failed to dismiss popup: {e}")
+                        # Try sending close message
+                        try:
+                            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                        except:
+                            pass
     try:
         win32gui.EnumWindows(enum_handler, None)
     except:
@@ -862,23 +873,14 @@ def smart_navigate_to_pr():
             
             print(f"Current Window Size: {width}x{height}")
             
-            # Strategy: If window is large enough (e.g. > 1600x900), assume it's fine.
-            # Only touch ShowWindow if it's small or minimized.
+            # Strategy: Only maximize if window is too small for reliable detection
             if width > 1600 and height > 900:
-                 print("Window is already large. Skipping Resize/Restore commands.")
+                print("Window is already large enough. No resize needed.")
             else:
-                # Check minimized state via IsIconic
-                if win32gui.IsIconic(hitops_hwnd):
-                    print("Window is minimized. Restoring...")
-                    win32gui.ShowWindow(hitops_hwnd, win32con.SW_RESTORE)
-                    time.sleep(0.5)
-                
-                # Check maximized state via GetWindowPlacement
-                placement = win32gui.GetWindowPlacement(hitops_hwnd)
-                if placement[1] != win32con.SW_SHOWMAXIMIZED:
-                    print("Window not maximized. Maximizing...")
-                    win32gui.ShowWindow(hitops_hwnd, win32con.SW_MAXIMIZE)
-                    time.sleep(1.0) # Wait for animation
+                # Window is small - maximize it
+                print("Window too small. Maximizing for reliable menu detection...")
+                win32gui.ShowWindow(hitops_hwnd, win32con.SW_MAXIMIZE)
+                time.sleep(1.5)  # Wait for animation
 
             # Always Bring to front
             win32gui.SetForegroundWindow(hitops_hwnd)
@@ -904,6 +906,9 @@ def smart_navigate_to_pr():
 
     loop_count = 0
     while time.time() - start_time < TIMEOUT:
+        # Check for blocking popup
+        check_popup_by_title()
+        
         loop_count += 1
         if loop_count % 10 == 0:
             print(f"Scanning... ({int(time.time() - start_time)}s)")
@@ -986,6 +991,23 @@ def smart_navigate_to_pr():
                     print(f"Clicking M&R Submenu...")
                     center_x = box.left + (box.width / 2) + left_offset
                     center_y = box.top + (box.height / 2) + top_offset
+                    
+                    # DEBUG: Visual Click Confirmation
+                    try:
+                        from PIL import ImageDraw
+                        debug_click_img = screenshot.copy()
+                        draw = ImageDraw.Draw(debug_click_img)
+                        # Draw red circle at target
+                        r = 10
+                        rel_x = center_x - left_offset
+                        rel_y = center_y - top_offset
+                        draw.ellipse((rel_x-r, rel_y-r, rel_x+r, rel_y+r), outline="red", width=3)
+                        debug_path = os.path.join(assets_dir, 'debug_last_click.png')
+                        debug_click_img.save(debug_path)
+                        print(f"DEBUG: Saved click target visual to {debug_path}")
+                    except Exception as e:
+                        print(f"Debug save failed: {e}")
+
                     pyautogui.click(center_x, center_y)
                     last_clicked = 'mr_submenu'
                     last_clicked_time = time.time()
@@ -1035,7 +1057,44 @@ def smart_navigate_to_pr():
                 
                 # Search for repair icon (no Y restriction - tiles can be anywhere)
                 if os.path.exists(targets['repair_icon']):
-                    box = safe_locate(targets['repair_icon'], screenshot, confidence=0.75)
+                    # DEBUG: Find ALL matches to see if we satisfy multiple icons
+                    try:
+                        all_matches = list(pyautogui.locateAll(targets['repair_icon'], screenshot, confidence=0.75))
+                        print(f"DEBUG: Found {len(all_matches)} potential Repair Icons.")
+                        
+                        if len(all_matches) > 0:
+                            # Visual Debug for ALL matches
+                            from PIL import ImageDraw
+                            debug_all_img = screenshot.copy()
+                            draw = ImageDraw.Draw(debug_all_img)
+                            for match in all_matches:
+                                cx = match.left + (match.width / 2)
+                                cy = match.top + (match.height / 2)
+                                r = 15
+                                draw.ellipse((cx-r, cy-r, cx+r, cy+r), outline="blue", width=3)
+                                print(f"  - Match at ({cx}, {cy})")
+                                
+                            debug_all_path = os.path.join(assets_dir, 'debug_all_repair_matches.png')
+                            debug_all_img.save(debug_all_path)
+                            print(f"DEBUG: Saved all matches to {debug_all_path}")
+                            
+                            # Use the first match (or logic to pick best one?)
+                            # For now, pick the one with highest Y (lowest on screen?) or highest X?
+                            # Usually main menu is in center/body.
+                            box = all_matches[0] 
+                    except Exception as e:
+                         print(f"LocateAll failed: {e}")
+                         box = safe_locate(targets['repair_icon'], screenshot, confidence=0.75)
+
+                # OCR Fallback for Repair Tile
+                if box is None:
+                    try:
+                        box = ocr_helpers.find_maintenance_tile(screenshot)
+                        if box:
+                            print("Found Repair Tile via OCR!")
+                    except Exception as e:
+                        print(f"OCR Tile search failed: {e}")
+
                     if box:
                         print(f"Found Repair Icon!")
                             
@@ -1046,12 +1105,46 @@ def smart_navigate_to_pr():
                     
                     print(f"DEBUG: Repair Icon Coordinates: ({center_x}, {center_y})")
                     
+                    # DEBUG: Visual Click Confirmation
+                    try:
+                        from PIL import ImageDraw
+                        debug_click_img = screenshot.copy()
+                        draw = ImageDraw.Draw(debug_click_img)
+                        # Draw red circle at target
+                        r = 10
+                        rel_x = center_x - left_offset
+                        rel_y = center_y - top_offset
+                        draw.ellipse((rel_x-r, rel_y-r, rel_x+r, rel_y+r), outline="red", width=3)
+                        debug_path = os.path.join(assets_dir, 'debug_last_click_repair.png')
+                        debug_click_img.save(debug_path)
+                        print(f"DEBUG: Saved click target visual to {debug_path}")
+                    except Exception as e:
+                        print(f"Debug save failed: {e}")
+
+                    # Definite Hover to show user where we are clicking
+                    print(f"Moving to Repair Icon at ({center_x}, {center_y})...")
+                    pyautogui.moveTo(center_x, center_y, duration=0.5)
+                    
+                    # Wait longer (3s) to ensure UI is stable after resize
+                    print("Waiting 3 seconds for UI stability...")
+                    time.sleep(3.0) 
+
                     # Click the tile
-                    pyautogui.click(center_x, center_y)
+                    # Try Double Click? Or just single click?
+                    # Let's stick to single click first, but with delay.
+                    pyautogui.click() # Click at current location
+                    
+                    # Immediately check for popup after click
+                    time.sleep(0.5)
+                    check_popup_by_title()
                     
                     last_clicked = 'root'
                     last_clicked_time = time.time()
-                    time.sleep(1.5)  # Wait for submenu window to open
+                    time.sleep(1.0)  # Wait for submenu window to open
+                    
+                    # Check popup again
+                    check_popup_by_title()
+                    
                     print("Submenu should be visible now, searching for Inventory...")
                     continue
 
