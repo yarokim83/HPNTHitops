@@ -966,26 +966,52 @@ def smart_navigate_to_pr():
                 print(f"Scanning... ({int(time.time() - start_time)}s)")
                 
             try:
-                # 1. Capture Screen (ROI if available, full screen otherwise)
-                if hitops_rect:
-                    screenshot = ImageGrab.grab(bbox=hitops_rect)
-                else:
-                    screenshot = ImageGrab.grab(all_screens=True)
+                # 1. Capture Screen (Multi-monitor Safe)
+                full_screenshot = ImageGrab.grab(all_screens=True)
                 
-                # DEBUG: Save screenshot to verify what Python sees
+                # Get Virtual Screen Bounds to handle negative coordinates (if primary is on right)
+                v_screen_left = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
+                v_screen_top = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
+
+                if hitops_rect:
+                    # ROI Mode: Crop the full screenshot to the window area
+                    w_left, w_top, w_right, w_bottom = hitops_rect
+                    
+                    # Calculate Crop Box relative to the full screenshot (0,0 is top-left of virtual screen)
+                    crop_left = w_left - v_screen_left
+                    crop_top = w_top - v_screen_top
+                    crop_right = w_right - v_screen_left
+                    crop_bottom = w_bottom - v_screen_top
+                    
+                    # Ensure bounds are valid
+                    crop_left = max(0, crop_left)
+                    crop_top = max(0, crop_top)
+                    crop_right = min(full_screenshot.width, crop_right)
+                    crop_bottom = min(full_screenshot.height, crop_bottom)
+                    
+                    if crop_right > crop_left and crop_bottom > crop_top:
+                        screenshot = full_screenshot.crop((crop_left, crop_top, crop_right, crop_bottom))
+                        # Offset for click coordinates: Window Top-Left
+                        scan_offset_x = w_left
+                        scan_offset_y = w_top
+                    else:
+                        print("Warning: Window is outside of visible screen area. Creating full dump.")
+                        screenshot = full_screenshot
+                        scan_offset_x = v_screen_left
+                        scan_offset_y = v_screen_top
+                else:
+                    # Full Screen Search
+                    screenshot = full_screenshot
+                    scan_offset_x = v_screen_left
+                    scan_offset_y = v_screen_top
+                
+                # DEBUG: Save screenshot
                 if not saved_debug:
                     debug_path = os.path.join(assets_dir, 'debug_smart_nav.png')
                     screenshot.save(debug_path)
-                    print(f"DEBUG: Saved screenshot to {debug_path}. Please check if Right Monitor is visible.")
+                    print(f"DEBUG: Saved screenshot to {debug_path}. Offset: ({scan_offset_x}, {scan_offset_y})")
                     saved_debug = True
-                
-                # 2. Virtual Screen Offset
-                try:
-                    v_left = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
-                    v_top = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
-                except:
-                    v_left = 0
-                    v_top = 0
+
 
                 # logic: if we clicked something but haven't found the next target after 5 seconds, reset state
                 if last_clicked and (time.time() - last_clicked_time > 5.0):
@@ -1012,8 +1038,8 @@ def smart_navigate_to_pr():
 
                     if box:
                         print(f"Clicking Purchase Request Menu...")
-                        center_x = box.left + (box.width / 2) + left_offset
-                        center_y = box.top + (box.height / 2) + top_offset
+                        center_x = box.left + (box.width / 2) + scan_offset_x
+                        center_y = box.top + (box.height / 2) + scan_offset_y
                         pyautogui.click(center_x, center_y)
                         print("Navigation Complete.")
                         return True
@@ -1038,8 +1064,8 @@ def smart_navigate_to_pr():
 
                     if box:
                         print(f"Clicking M&R Submenu...")
-                        center_x = box.left + (box.width / 2) + left_offset
-                        center_y = box.top + (box.height / 2) + top_offset
+                        center_x = box.left + (box.width / 2) + scan_offset_x
+                        center_y = box.top + (box.height / 2) + scan_offset_y
                         
                         # DEBUG: Visual Click Confirmation
                         try:
@@ -1047,8 +1073,9 @@ def smart_navigate_to_pr():
                             debug_click_img = screenshot.copy()
                             draw = ImageDraw.Draw(debug_click_img)
                             r = 10
-                            rel_x = center_x - left_offset
-                            rel_y = center_y - top_offset
+                            # Draw directly on valid screenshot coordinates (box is relative to screenshot)
+                            rel_x = box.left + (box.width / 2)
+                            rel_y = box.top + (box.height / 2)
                             draw.ellipse((rel_x-r, rel_y-r, rel_x+r, rel_y+r), outline="red", width=3)
                             debug_path = os.path.join(assets_dir, 'debug_last_click.png')
                             debug_click_img.save(debug_path)
@@ -1086,8 +1113,8 @@ def smart_navigate_to_pr():
                     
                     if box:
                         print(f"Clicking Inventory Menu...")
-                        center_x = box.left + (box.width / 2) + left_offset
-                        center_y = box.top + (box.height / 2) + top_offset
+                        center_x = box.left + (box.width / 2) + scan_offset_x
+                        center_y = box.top + (box.height / 2) + scan_offset_y
                         pyautogui.click(center_x, center_y)
                         last_clicked = 'inventory'
                         last_clicked_time = time.time()
@@ -1121,8 +1148,8 @@ def smart_navigate_to_pr():
 
                     if box:
                         print(f"Found Repair Icon!")
-                        center_x = box.left + (box.width / 2) + left_offset
-                        center_y = box.top + (box.height / 2) + top_offset
+                        center_x = box.left + (box.width / 2) + scan_offset_x
+                        center_y = box.top + (box.height / 2) + scan_offset_y
                         
                         # Definite Hover
                         print(f"Moving to Repair Icon at ({center_x}, {center_y})...")
