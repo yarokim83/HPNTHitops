@@ -28,7 +28,7 @@ class PRMakerWidget(ctk.CTk):
         self.title("PR Maker Widget")
         self.geometry(f"{WIDGET_WIDTH}x{WIDGET_HEIGHT}")
         self.overrideredirect(True) # Frameless
-        self.attributes('-topmost', True)
+        # self.attributes('-topmost', True) # Removed permanent Topmost
         self.attributes('-alpha', ALPHA_VALUE)
         self.resizable(False, False)
         
@@ -134,6 +134,14 @@ class PRMakerWidget(ctk.CTk):
         y = self.winfo_y() + deltay
         self.geometry(f"+{x}+{y}")
         
+    def bring_to_front(self):
+        self.deiconify()
+        self.attributes('-topmost', True)
+        self.lift()
+        self.focus_force()
+        # Disable topmost after a short delay to allow other windows to cover it
+        self.after(200, lambda: self.attributes('-topmost', False))
+
     def show_at_cursor(self):
         try:
             # Get Mouse Position
@@ -152,12 +160,11 @@ class PRMakerWidget(ctk.CTk):
                 final_y = mouse_y - WIDGET_HEIGHT - 10
                 
             self.geometry(f"+{final_x}+{final_y}")
-            self.deiconify()
-            self.attributes('-topmost', True)
+            self.bring_to_front()
             self.desc_entry.focus_set()
         except:
             self.center_window()
-            self.deiconify()
+            self.bring_to_front()
 
     def hide_widget(self):
         self.withdraw()
