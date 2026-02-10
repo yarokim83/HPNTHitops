@@ -553,11 +553,7 @@ def enter_part_no(part_no_text):
         # Type Part No
         pyautogui.write(part_no_text, interval=0.02)
         time.sleep(0.3)  # Wait for input to complete
-        
-        # Press Enter to confirm/search
-        pyautogui.press('enter')
-        time.sleep(0.5)  # Wait for system to process Enter
-        print("Part No entered and confirmed with Enter.")
+        print("Part No entered.")
             
     else:
         print("Failed to find 'Part No' label.")

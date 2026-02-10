@@ -71,27 +71,11 @@ def run_automation(pr_description, is_unit_price, account_code, part_no=None):
         else:
             print(f"Skipping Part No input: '{part_no}' is too short or potentially unsafe.")
         
-        # 7. Pause and Move to Next Step
-        print("Initial form filling complete. Waiting for user confirmation...")
-        messagebox.showinfo("Continue?", "Please check the form. Click OK to proceed to 'Inventory' menu.")
-        
-        # 8. Re-navigate to Inventory
-        print("Re-activating Main Window and clicking Inventory...")
-        time.sleep(1)
-        menu_navigator.click_inventory()
-        print("Inventory menu clicked (Round 2).")
-        
-        # 9. Click Approve Purchase Request
-        time.sleep(1)
-        menu_navigator.click_approve_purchase_request()
-        
-        # 10. Program complete
+        # 7. Program complete
         print("\n" + "="*60)
-        print("✓ Program execution complete!")
-        print("✓ Successfully navigated to Approve Purchase Request menu")
+        print("✓ Part No entry complete!")
+        print("✓ Automation stopped as requested after Part No.")
         print("="*60)
-        print("\nPlease manually complete the approval process.")
-        messagebox.showinfo("Success", "Navigation complete!\n\nThe Approve Purchase Request menu is now open.\nPlease manually select and approve your PR.")
         return
 
     except Exception as e:
