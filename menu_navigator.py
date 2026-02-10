@@ -925,12 +925,16 @@ def smart_navigate_to_pr():
                 
                 print(f"Current Window Size: {width}x{height}")
                 
-                # Strategy: Only maximize if window is too small for reliable detection
-                if width > 1600 and height > 900:
-                    print("Window is already large enough. No resize needed.")
+                # Check if already maximized
+                placement = win32gui.GetWindowPlacement(hitops_hwnd)
+                # placement[1] is showCmd. SW_SHOWMAXIMIZED is 3.
+                is_maximized = (placement[1] == win32con.SW_SHOWMAXIMIZED)
+                
+                if is_maximized:
+                     print("Window is already maximized. Skipping resize.")
                 else:
-                    # Window is small - maximize it
-                    print("Window too small. Maximizing for reliable menu detection...")
+                    # Only maximize if not already maximized
+                    print("Maximizing window for reliable menu detection...")
                     win32gui.ShowWindow(hitops_hwnd, win32con.SW_MAXIMIZE)
                     time.sleep(1.5)  # Wait for animation
 
@@ -967,43 +971,20 @@ def smart_navigate_to_pr():
                 
             try:
                 # 1. Capture Screen (Multi-monitor Safe)
-                full_screenshot = ImageGrab.grab(all_screens=True)
+                # ROI Cropping removed to prevent coordinate offsets on dual monitors
+                screenshot = ImageGrab.grab(all_screens=True)
                 
-                # Get Virtual Screen Bounds to handle negative coordinates (if primary is on right)
+                # Get Virtual Screen Bounds
                 v_screen_left = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
                 v_screen_top = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
 
-                if hitops_rect:
-                    # ROI Mode: Crop the full screenshot to the window area
-                    w_left, w_top, w_right, w_bottom = hitops_rect
-                    
-                    # Calculate Crop Box relative to the full screenshot (0,0 is top-left of virtual screen)
-                    crop_left = w_left - v_screen_left
-                    crop_top = w_top - v_screen_top
-                    crop_right = w_right - v_screen_left
-                    crop_bottom = w_bottom - v_screen_top
-                    
-                    # Ensure bounds are valid
-                    crop_left = max(0, crop_left)
-                    crop_top = max(0, crop_top)
-                    crop_right = min(full_screenshot.width, crop_right)
-                    crop_bottom = min(full_screenshot.height, crop_bottom)
-                    
-                    if crop_right > crop_left and crop_bottom > crop_top:
-                        screenshot = full_screenshot.crop((crop_left, crop_top, crop_right, crop_bottom))
-                        # Offset for click coordinates: Window Top-Left
-                        scan_offset_x = w_left
-                        scan_offset_y = w_top
-                    else:
-                        print("Warning: Window is outside of visible screen area. Creating full dump.")
-                        screenshot = full_screenshot
-                        scan_offset_x = v_screen_left
-                        scan_offset_y = v_screen_top
-                else:
-                    # Full Screen Search
-                    screenshot = full_screenshot
-                    scan_offset_x = v_screen_left
-                    scan_offset_y = v_screen_top
+                # Always use full screen search for reliability
+                scan_offset_x = v_screen_left
+                scan_offset_y = v_screen_top
+                
+                # Update hitops_rect just for reference/debug
+                hitops_rect, _ = roi_helpers.get_hitops_window_rect()
+
                 
                 # DEBUG: Save screenshot
                 if not saved_debug:
