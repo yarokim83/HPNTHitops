@@ -89,7 +89,8 @@ def find_text_in_image(screenshot, target_text, region="full"):
         region: "full", "top" (top 150px only), or "header" (top 100px, 3x scale)
     """
     if not _tesseract_available:
-        return None
+        if not init_tesseract():
+             return None
     
     try:
         import pytesseract

@@ -4,6 +4,10 @@ import pyperclip
 import win32gui
 import win32con
 import roi_helpers
+import pyautogui
+
+# Global configuration
+pyautogui.FAILSAFE = False
 
 def window_enum_handler(hwnd, resultList):
     if win32gui.IsWindowVisible(hwnd):
@@ -87,6 +91,12 @@ def perform_login(password):
         time.sleep(0.5)
 
         # 2. Click Center to Ensure Focus
+        # Refresh rect after restore to get actual coordinates
+        try:
+             target_rect = win32gui.GetWindowRect(hwnd)
+        except Exception as e:
+             print(f"Failed to refresh window rect: {e}")
+
         if target_rect:
              cx = target_rect[0] + (target_rect[2] - target_rect[0]) // 2
              cy = target_rect[1] + (target_rect[3] - target_rect[1]) // 2
@@ -99,10 +109,9 @@ def perform_login(password):
 
         # 3. Type Password
         print("Typing password...")
-        # Clear field (Ctrl+A -> Delete) just in case
+        # Clear field (Ctrl+A only, typing overwrites) 
+        # Deleted 'delete' key press to prevent accidental file deletion on Desktop
         pyautogui.hotkey('ctrl', 'a')
-        time.sleep(0.1)
-        pyautogui.press('delete')
         time.sleep(0.1)
 
         # Type Password

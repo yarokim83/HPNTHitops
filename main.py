@@ -22,26 +22,12 @@ def run_automation(pr_description, is_unit_price, account_code, part_no=None):
         return
 
     try:
-        # 1. Launch & Login Logic
-        # Check if already running (Skip Launch/Login)
-        if menu_navigator.is_hitops_running():
-             print("Skipping Launch & Login (Hitops3.exe is running).")
-        else:
-             # 3. Launch Hitops3
-             working_dir = os.path.dirname(exe_path)
-             print(f"Launching {exe_path}...")
-             subprocess.Popen(exe_path, cwd=working_dir)
-             
-             # 4. Perform Login
-             password = "fdjk213!@"
-             print("Waiting for application to load (Searching for 30 seconds)...")
-             if login_manager.perform_login(password):
-                 print("Login successful. Proceeding...")
-             else:
-                 print("Login failed or timed out.")
-                 return
+        # 1. Common Launch & Login & Maximize (Shared with M&C flow)
+        if not menu_navigator.ensure_app_ready():
+            print("App initialization failed. Aborting PR automation.")
+            return
 
-        # 5. Smart Menu Navigation (Parallel/Event-Driven)
+        # 2. Smart Menu Navigation (Parallel/Event-Driven)
         print("Executing Smart Navigation...")
         if not menu_navigator.smart_navigate_to_pr():
              print("Smart Navigation failed or timed out.")

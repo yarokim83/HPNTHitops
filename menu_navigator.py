@@ -1,5 +1,8 @@
 import pyautogui
 import time
+
+# Global configuration
+pyautogui.FAILSAFE = False
 import os
 import sys
 from PIL import ImageGrab
@@ -10,6 +13,212 @@ import subprocess
 import threading
 import roi_helpers
 import ocr_helpers
+import login_manager # Import Login Manager
+
+# ============================================================
+# Shared Functions (Used by both Purchase and M&C flows)
+# ============================================================
+
+def ensure_app_ready():
+    """
+    Common pre-processing: Launch → Login → Maximize → Foreground.
+    Used by both run_mc_sequence() and main.py's run_automation().
+    Returns True if app is ready, False on failure.
+    """
+    exe_path = r"C:\Program Files (x86)\Hyundai-UNI\HITOPSIII\Hitops3.exe"
+    password = "fdjk213!@"
+    
+    # Step 1: Launch (if not running)
+    if not is_hitops_running():
+        if os.path.exists(exe_path):
+            print(f"Launching {exe_path}...")
+            subprocess.Popen(exe_path, cwd=os.path.dirname(exe_path))
+            time.sleep(3)
+        else:
+            print(f"Error: Executable not found at {exe_path}")
+            return False
+    else:
+        print("Hitops is already running.")
+    
+    # Step 2: Login
+    print("Performing Login...")
+    if not login_manager.perform_login(password):
+        print("Login failed or timed out.")
+        return False
+    print("Login successful.")
+    
+    # Step 3: Maximize & Foreground
+    ensure_hitops_maximized()
+    
+    return True
+
+def run_mc_sequence():
+    """
+    Executes the M&C automation sequence.
+    1. ensure_app_ready() (Launch + Login + Maximize)
+    2. Hover 'Monitoring'
+    3. Click 'M&C'
+    4. Click 'Vessel'
+    5. Click 'Berthing Schedule'
+    """
+    print("Starting M&C Automation Sequence...")
+    
+    # Step 0: Common Launch/Login/Maximize
+    if not ensure_app_ready():
+        print("App initialization failed. Aborting M&C sequence.")
+        return False
+
+    print("Searching for Monitoring Menu...")
+    
+    assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
+    monitoring_img = os.path.join(assets_dir, 'monitoring_menu.png')
+    mc_item_img = os.path.join(assets_dir, 'mc_menu_item.png')
+    
+    # Step 2: Find and Hover Monitoring (with Retry and OCR fallback)
+    loc_monitoring = None
+    for i in range(10): # Try for 10 seconds
+        # 1. Image Search
+        loc_monitoring = locate_on_all_screens(monitoring_img, confidence_val=0.7)
+        
+        # 2. OCR Fallback (If image search fails)
+        if not loc_monitoring:
+            screenshot = ImageGrab.grab(all_screens=True)
+            res = ocr_helpers.find_text_in_image(screenshot, "Monitoring")
+            if res:
+                # Add virtual screen offset
+                left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
+                top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
+                # Calculate center from Box object
+                center_x = res.left + (res.width / 2) + left_offset
+                center_y = res.top + (res.height / 2) + top_offset
+                loc_monitoring = (center_x, center_y)
+
+        if loc_monitoring:
+            break
+            
+        time.sleep(1)
+        print(f"Searching for Monitoring... ({i+1}/10)")
+
+    if loc_monitoring:
+        print(f"Hovering over Monitoring at {loc_monitoring}...")
+        pyautogui.moveTo(loc_monitoring)
+        time.sleep(1.0) # Wait for submenu
+        
+        # Step 3: Click M&C
+        loc_mc = locate_on_all_screens(mc_item_img, confidence_val=0.7)
+        # Detailed retry for M&C item too
+        if not loc_mc:
+             for j in range(5):
+                 time.sleep(0.5)
+                 loc_mc = locate_on_all_screens(mc_item_img, confidence_val=0.7)
+                 if loc_mc: break
+
+        if loc_mc:
+            print(f"Clicking M&C Menu Item at {loc_mc}...")
+            pyautogui.click(loc_mc)
+            print("M&C clicked. Waiting for Monitoring & Control window to open...")
+            
+            print("M&C clicked. Waiting for window...")
+            time.sleep(3.0)
+            
+            # Step 4: Click "Vessel" menu (small text in top menu bar)
+            print("Step 4: Searching for Vessel menu...")
+            loc_vessel = None
+            
+            for v in range(10):
+                # Image search first
+                vessel_img = os.path.join(assets_dir, 'vessel_menu.png')
+                if os.path.exists(vessel_img):
+                    loc_vessel = locate_on_all_screens(vessel_img, confidence_val=0.7)
+                
+                # OCR fallback - Global Search (Same as Monitoring/Maintenance)
+                if not loc_vessel:
+                    screenshot = ImageGrab.grab(all_screens=True)
+                    # Search full screen for "Vessel"
+                    res = ocr_helpers.find_text_in_image(screenshot, "Vessel")
+                    
+                    if res:
+                        # Add virtual screen offset
+                        left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
+                        top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
+                        # Calculate center from Box object
+                        center_x = res.left + (res.width / 2) + left_offset
+                        center_y = res.top + (res.height / 2) + top_offset
+                        loc_vessel = (center_x, center_y)
+                        print(f"OCR found Vessel at ({center_x}, {center_y})")
+                
+                if loc_vessel:
+                    break
+                time.sleep(1)
+                print(f"Searching for Vessel... ({v+1}/10)")
+            
+            if loc_vessel:
+                print(f"Clicking Vessel at {loc_vessel}...")
+                pyautogui.click(loc_vessel)
+
+def ensure_hitops_maximized():
+    """
+    Finds the HI-TOPS window and maximizes it if not already maximized.
+    Also brings it to the foreground.
+    """
+    hitops_rect, hitops_hwnd = roi_helpers.get_hitops_window_rect()
+    if hitops_hwnd:
+        try:
+            # Check current size directly
+            rect = win32gui.GetWindowRect(hitops_hwnd)
+            width = rect[2] - rect[0]
+            height = rect[3] - rect[1]
+            print(f"Current Window Size: {width}x{height}")
+
+            # Check maximized state via GetWindowPlacement
+            placement = win32gui.GetWindowPlacement(hitops_hwnd)
+            is_maximized = (placement[1] == win32con.SW_SHOWMAXIMIZED)
+
+            if is_maximized:
+                print("Window is already maximized. Skipping resize.")
+            else:
+                # Check minimized state via IsIconic
+                if win32gui.IsIconic(hitops_hwnd):
+                    win32gui.ShowWindow(hitops_hwnd, win32con.SW_RESTORE)
+                    time.sleep(0.5)
+                print("Maximizing window for reliable menu detection...")
+                win32gui.ShowWindow(hitops_hwnd, win32con.SW_MAXIMIZE)
+                time.sleep(1.5)  # Wait for animation
+
+            # Always Bring to front
+            win32gui.SetForegroundWindow(hitops_hwnd)
+            time.sleep(0.5)
+            print("Hitops window activated and maximized.")
+        except Exception as e:
+            print(f"Window maximization warning: {e}")
+    else:
+        print("Warning: Could not find HI-TOPS window to maximize.")
+
+def click_mc_menu():
+    """Clicks the M&C menu using mc_icon.png as asset."""
+    assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
+    img_path = os.path.join(assets_dir, 'mc_icon.png')
+    print(f"Clicking M&C Menu using {img_path}...")
+    loc = locate_on_all_screens(img_path, confidence_val=0.7)
+    if loc:
+        pyautogui.click(loc)
+        print("M&C Menu clicked.")
+        return True
+    print("M&C Menu not found.")
+    return False
+
+def click_rcc_menu():
+    """Clicks the RCC menu using rcc_icon.png as asset."""
+    assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
+    img_path = os.path.join(assets_dir, 'rcc_icon.png')
+    print(f"Clicking RCC Menu using {img_path}...")
+    loc = locate_on_all_screens(img_path, confidence_val=0.7)
+    if loc:
+        pyautogui.click(loc)
+        print("RCC Menu clicked.")
+        return True
+    print("RCC Menu not found.")
+    return False
 
 def locate_on_all_screens(image_path, confidence_val=0.8):
     """
@@ -21,12 +230,11 @@ def locate_on_all_screens(image_path, confidence_val=0.8):
         screenshot = ImageGrab.grab(all_screens=True)
         
         # Locate the image within the screenshot
-        # Note: locate returns (left, top, width, height) relative to the screenshot
         try:
             box = pyautogui.locate(image_path, screenshot, confidence=confidence_val)
-        except TypeError:
-             # Fallback if confidence is not supported (no opencv)
-            box = pyautogui.locate(image_path, screenshot)
+        except Exception:
+             # Handle ImageNotFoundException and other issues
+            box = None
             
         if box:
             # Get Virtual Screen offset (top-left of the virtual desktop)
@@ -309,8 +517,7 @@ def update_need_by_date():
         # Overwrite Field
         pyautogui.hotkey('ctrl', 'a')
         time.sleep(0.1)
-        pyautogui.press('delete') 
-        time.sleep(0.1)
+        # Deleted 'delete' key press to prevent accidental file deletion on Desktop
         
         # Fast Typing
         pyautogui.write(new_date_str, interval=0.02) # Fast typing
@@ -716,11 +923,16 @@ def is_hitops_running():
     # 2. Fallback: Check process list (e.g. if minimized to tray or loading)
     try:
         # Run tasklist and capture output (Binary check to avoid encoding issues)
-        output = subprocess.check_output('tasklist /FI "IMAGENAME eq Hitops3.exe"', shell=True)
+        # 3221225786 is likely an access violation or similar Windows error code.
+        # We wrap this in a safe try-except block.
+        output = subprocess.check_output('tasklist /FI "IMAGENAME eq Hitops3.exe"', shell=True, stderr=subprocess.STDOUT)
         if b"Hitops3.exe" in output or b"Hitops3" in output:
             print("Hitops3.exe process detected (No window found yet).")
             return True
+    except subprocess.CalledProcessError as e:
+        print(f"Tasklist command failed with exit code {e.returncode}: {e.output}")
     except Exception as e:
+        print(f"Error checking process list: {e}")
         print(f"Error checking process list: {e}")
         
     print("Hitops3 application not found (No Window, No Process).")
@@ -911,40 +1123,8 @@ def smart_navigate_to_pr():
         # Popup Handling Asset
         popup_asset = os.path.join(assets_dir, 'popup_invalid_parameter.png')
         
-        # 1. Activate & Maximize Window FIRST
-        hitops_rect_initial, hitops_hwnd = roi_helpers.get_hitops_window_rect()
-        
-        if hitops_hwnd:
-            try:
-                import win32con
-                
-                # Check current size directly
-                rect = win32gui.GetWindowRect(hitops_hwnd)
-                width = rect[2] - rect[0]
-                height = rect[3] - rect[1]
-                
-                print(f"Current Window Size: {width}x{height}")
-                
-                # Check if already maximized
-                placement = win32gui.GetWindowPlacement(hitops_hwnd)
-                # placement[1] is showCmd. SW_SHOWMAXIMIZED is 3.
-                is_maximized = (placement[1] == win32con.SW_SHOWMAXIMIZED)
-                
-                if is_maximized:
-                     print("Window is already maximized. Skipping resize.")
-                else:
-                    # Only maximize if not already maximized
-                    print("Maximizing window for reliable menu detection...")
-                    win32gui.ShowWindow(hitops_hwnd, win32con.SW_MAXIMIZE)
-                    time.sleep(1.5)  # Wait for animation
-
-                # Always Bring to front
-                win32gui.SetForegroundWindow(hitops_hwnd)
-                time.sleep(0.5)
-                print("Hitops window activated.")
-            except Exception as e:
-                print(f"Window activation warning: {e}")
-                pass
+        # 1. Activate & Maximize Window FIRST (Using shared function)
+        ensure_hitops_maximized()
                 
         # 2. Get ROI coordinates (AFTER maximization)
         # Re-fetch rect because maximization changed it
