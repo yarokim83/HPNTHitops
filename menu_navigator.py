@@ -155,6 +155,26 @@ def run_mc_sequence():
             if loc_vessel:
                 print(f"Clicking Vessel at {loc_vessel}...")
                 pyautogui.click(loc_vessel)
+                
+                # Step 5: Click "Berthing Schedule"
+                print("Step 5: Searching for Berthing Schedule...")
+                time.sleep(2.0)  # Wait for Vessel menu to render
+                
+                bs_img = os.path.join(assets_dir, 'berthing_schedule.png')
+                loc_bs = None
+                if os.path.exists(bs_img):
+                    for b in range(10):
+                        loc_bs = locate_on_all_screens(bs_img, confidence_val=0.7)
+                        if loc_bs:
+                            break
+                        time.sleep(1)
+                        print(f"Searching for Berthing Schedule... ({b+1}/10)")
+                
+                if loc_bs:
+                    print(f"Clicking Berthing Schedule at {loc_bs}...")
+                    pyautogui.click(loc_bs)
+                else:
+                    print("Berthing Schedule menu not found.")
 
 def ensure_hitops_maximized():
     """
