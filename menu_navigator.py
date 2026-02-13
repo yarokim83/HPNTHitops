@@ -9,11 +9,59 @@ from PIL import ImageGrab
 import win32api
 import win32con
 import win32gui
+import win32process
 import subprocess
 import threading
+import ctypes
 import roi_helpers
 import ocr_helpers
 import login_manager # Import Login Manager
+
+def force_activate_window(hwnd):
+    """
+    Force-activate a window even when SetForegroundWindow alone fails.
+    Uses AttachThreadInput trick to bypass Windows foreground restrictions.
+    """
+    try:
+        # Step 1: If minimized, restore it
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            time.sleep(0.3)
+        
+        # Step 2: Get thread IDs
+        foreground_hwnd = win32gui.GetForegroundWindow()
+        foreground_thread_id = win32process.GetWindowThreadProcessId(foreground_hwnd)[0]
+        target_thread_id = win32process.GetWindowThreadProcessId(hwnd)[0]
+        
+        # Step 3: Attach to foreground thread, activate, then detach
+        if foreground_thread_id != target_thread_id:
+            ctypes.windll.user32.AttachThreadInput(foreground_thread_id, target_thread_id, True)
+        
+        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+        win32gui.BringWindowToTop(hwnd)
+        win32gui.SetForegroundWindow(hwnd)
+        
+        if foreground_thread_id != target_thread_id:
+            ctypes.windll.user32.AttachThreadInput(foreground_thread_id, target_thread_id, False)
+        
+        time.sleep(0.3)
+        
+        # Verify activation
+        current_fg = win32gui.GetForegroundWindow()
+        if current_fg == hwnd:
+            print(f"Window activated successfully (HWND: {hwnd})")
+            return True
+        else:
+            print(f"Warning: Foreground is {current_fg}, not {hwnd}. Trying Alt trick...")
+            # Fallback: Alt key trick
+            pyautogui.press('alt')
+            time.sleep(0.1)
+            win32gui.SetForegroundWindow(hwnd)
+            time.sleep(0.3)
+            return True
+    except Exception as e:
+        print(f"force_activate_window failed: {e}")
+        return False
 
 # ============================================================
 # Shared Functions (Used by both Purchase and M&C flows)
@@ -143,7 +191,26 @@ def run_mc_sequence():
                 print(f"Clicking M&C Menu Item at {loc_mc}...")
                 pyautogui.click(loc_mc)
                 print("M&C clicked. Waiting for window...")
-                time.sleep(3.0)
+                time.sleep(2.0)
+                
+                # Dismiss any popup that may appear after M&C click
+                print("Dismissing any popup (pressing Enter)...")
+                pyautogui.press('enter')
+                time.sleep(1.0)
+                
+                # Wait for M&C window to actually appear
+                mc_check = None
+                for wait_i in range(15):
+                    _, mc_check = roi_helpers.get_mc_window_rect()
+                    if mc_check:
+                        print(f"M&C window detected (HWND: {mc_check})")
+                        break
+                    time.sleep(1)
+                    print(f"Waiting for M&C window... ({wait_i+1}/15)")
+                
+                if not mc_check:
+                    print("M&C window did not appear after popup dismissal.")
+                    return False
             else:
                 print("M&C menu item not found.")
                 return False
@@ -151,20 +218,32 @@ def run_mc_sequence():
             print("Monitoring menu not found.")
             return False
     
-    # Step 4: Open "Vessel" menu via Alt+V shortcut
-    # First ensure M&C window has focus
+    # Step 4: Activate M&C window and open Vessel menu
     _, mc_hwnd_now = roi_helpers.get_mc_window_rect()
-    if mc_hwnd_now:
-        try:
-            win32gui.SetForegroundWindow(mc_hwnd_now)
-            time.sleep(0.5)
-            print(f"M&C window focused (HWND: {mc_hwnd_now})")
-        except Exception as e:
-            print(f"Warning: Could not focus M&C window: {e}")
+    if not mc_hwnd_now:
+        print("M&C window not found. Cannot proceed to Vessel menu.")
+        return False
+    
+    try:
+        # Force-activate M&C window using AttachThreadInput trick
+        win32gui.ShowWindow(mc_hwnd_now, win32con.SW_MAXIMIZE)
+        time.sleep(0.3)
+        force_activate_window(mc_hwnd_now)
+        time.sleep(0.5)
+        
+        # Click menu bar area to ensure keyboard focus for Alt+V
+        rect = win32gui.GetWindowRect(mc_hwnd_now)
+        menu_x = rect[0] + 100
+        menu_y = rect[1] + 30
+        pyautogui.click(menu_x, menu_y)
+        time.sleep(0.5)
+        print(f"M&C window activated and menu bar clicked ({menu_x}, {menu_y})")
+    except Exception as e:
+        print(f"Warning: Could not activate M&C window: {e}")
     
     print("Step 4: Opening Vessel menu (Alt+V)...")
     pyautogui.hotkey('alt', 'v')
-    time.sleep(2.0)  # Wait for Vessel menu to open
+    time.sleep(2.0)
     print("Alt+V sent. Vessel menu should be open.")
     
     # Step 5: Select "Berthing Schedule" via keyboard navigation
@@ -175,6 +254,79 @@ def run_mc_sequence():
         time.sleep(0.1)
     pyautogui.press('enter')
     print("Berthing Schedule selected via keyboard.")
+
+def click_rcc_menu():
+    """
+    RCC Automation Sequence:
+    1. Launch/Login/Maximize HI-TOPS
+    2. Hover 'Monitoring' to open submenu
+    3. Click 'RCC' (located below M&C in the submenu)
+    """
+    print("Starting RCC Automation Sequence...")
+    
+    # Step 0: Common Launch/Login/Maximize
+    if not ensure_app_ready():
+        print("App initialization failed. Aborting RCC sequence.")
+        return False
+    
+    assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
+    
+    # Step 1: Find and Hover Monitoring
+    print("Searching for Monitoring Menu...")
+    monitoring_img = os.path.join(assets_dir, 'monitoring_menu.png')
+    
+    loc_monitoring = None
+    for i in range(10):
+        loc_monitoring = locate_on_all_screens(monitoring_img, confidence_val=0.7)
+        
+        if not loc_monitoring:
+            screenshot = ImageGrab.grab(all_screens=True)
+            res = ocr_helpers.find_text_in_image(screenshot, "Monitoring")
+            if res:
+                left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
+                top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
+                center_x = res.left + (res.width / 2) + left_offset
+                center_y = res.top + (res.height / 2) + top_offset
+                loc_monitoring = (center_x, center_y)
+        
+        if loc_monitoring:
+            break
+        time.sleep(1)
+        print(f"Searching for Monitoring... ({i+1}/10)")
+    
+    if not loc_monitoring:
+        print("Monitoring menu not found.")
+        return False
+    
+    print(f"Hovering over Monitoring at {loc_monitoring}...")
+    pyautogui.moveTo(loc_monitoring)
+    time.sleep(1.0)
+    
+    # Step 2: Find M&C menu item as anchor, then click RCC below it
+    mc_item_img = os.path.join(assets_dir, 'mc_menu_item.png')
+    
+    print("Searching for M&C menu item as anchor for RCC...")
+    loc_mc = None
+    for j in range(5):
+        loc_mc = locate_on_all_screens(mc_item_img, confidence_val=0.7)
+        if loc_mc:
+            break
+        time.sleep(0.5)
+        print(f"Searching for M&C anchor... ({j+1}/5)")
+    
+    if loc_mc:
+        # RCC is directly below M&C in the submenu
+        # Use offset of 40px down from M&C center
+        rcc_x = loc_mc[0]
+        rcc_y = loc_mc[1] + 40
+        print(f"M&C found at {loc_mc}. Clicking RCC at ({rcc_x}, {rcc_y}) [M&C + 40px]...")
+        pyautogui.click(rcc_x, rcc_y)
+        print("RCC clicked. Waiting for window...")
+        time.sleep(3.0)
+        return True
+    else:
+        print("M&C menu item not found (cannot locate RCC).")
+        return False
 
 def ensure_hitops_maximized():
     """
@@ -225,19 +377,6 @@ def click_mc_menu():
         print("M&C Menu clicked.")
         return True
     print("M&C Menu not found.")
-    return False
-
-def click_rcc_menu():
-    """Clicks the RCC menu using rcc_icon.png as asset."""
-    assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
-    img_path = os.path.join(assets_dir, 'rcc_icon.png')
-    print(f"Clicking RCC Menu using {img_path}...")
-    loc = locate_on_all_screens(img_path, confidence_val=0.7)
-    if loc:
-        pyautogui.click(loc)
-        print("RCC Menu clicked.")
-        return True
-    print("RCC Menu not found.")
     return False
 
 def locate_on_all_screens(image_path, confidence_val=0.8):
