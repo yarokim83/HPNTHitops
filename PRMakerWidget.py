@@ -118,6 +118,16 @@ class PRMakerWidget(ctk.CTk):
                                      corner_radius=0, fg_color=COLORS["separator"])
         self.sep_line.pack(side="left", padx=4, pady=14)
 
+        # ── Settings Button (gear icon) ──
+        self.btn_settings = ctk.CTkButton(
+            self.dock, text="⚙", width=32, height=32,
+            corner_radius=16, font=("SF Pro Display", 16),
+            fg_color="transparent", hover_color=COLORS["hover"],
+            text_color=COLORS["text_secondary"],
+            command=self.show_password_dialog
+        )
+        self.btn_settings.pack(side="left", padx=2, pady=6)
+
         # ── Close Button (subtle X) ──
         self.btn_exit = ctk.CTkButton(
             self.dock, text="✕", width=32, height=32,
@@ -266,6 +276,93 @@ class PRMakerWidget(ctk.CTk):
             self.btn_tools.configure(fg_color=COLORS["accent_blue"])
             self.pr_visible = True
             self.desc_entry.focus_set()
+
+    def show_password_dialog(self):
+        """Apple-style floating password change dialog."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("")
+        dialog.overrideredirect(True)
+        dialog.attributes('-topmost', True)
+        dialog.configure(fg_color=COLORS["bg"])
+
+        # Position above the widget
+        wx = self.winfo_x()
+        wy = self.winfo_y()
+        dw, dh = 280, 180
+        dialog.geometry(f"{dw}x{dh}+{wx}+{wy - dh - 8}")
+
+        # Container with border
+        container = ctk.CTkFrame(dialog, corner_radius=14,
+                                 fg_color=COLORS["bg_secondary"],
+                                 border_width=1, border_color=COLORS["separator"])
+        container.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Title
+        title_label = ctk.CTkLabel(container, text="비밀번호 변경",
+                                   font=("SF Pro Display", 14, "bold"),
+                                   text_color=COLORS["text_primary"])
+        title_label.pack(pady=(12, 6))
+
+        # Current password (read-only, masked)
+        current_pw = menu_navigator.get_password()
+        cur_frame = ctk.CTkFrame(container, fg_color="transparent")
+        cur_frame.pack(fill="x", padx=16, pady=2)
+        ctk.CTkLabel(cur_frame, text="현재", width=36,
+                     font=("SF Pro Display", 11),
+                     text_color=COLORS["text_secondary"]).pack(side="left")
+        cur_entry = ctk.CTkEntry(cur_frame, height=30, corner_radius=8,
+                                 fg_color=COLORS["bg"], border_width=1,
+                                 border_color=COLORS["separator"],
+                                 text_color=COLORS["text_secondary"],
+                                 font=("SF Pro Display", 12))
+        cur_entry.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        cur_entry.insert(0, current_pw)
+        cur_entry.configure(state="disabled")
+
+        # New password input
+        new_frame = ctk.CTkFrame(container, fg_color="transparent")
+        new_frame.pack(fill="x", padx=16, pady=2)
+        ctk.CTkLabel(new_frame, text="변경", width=36,
+                     font=("SF Pro Display", 11),
+                     text_color=COLORS["text_secondary"]).pack(side="left")
+        new_entry = ctk.CTkEntry(new_frame, height=30, corner_radius=8,
+                                 fg_color=COLORS["bg"], border_width=1,
+                                 border_color=COLORS["separator"],
+                                 text_color=COLORS["text_primary"],
+                                 placeholder_text="새 비밀번호",
+                                 placeholder_text_color=COLORS["text_secondary"],
+                                 font=("SF Pro Display", 12))
+        new_entry.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        new_entry.focus_set()
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(container, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=16, pady=(8, 12))
+
+        def do_save():
+            new_pw = new_entry.get().strip()
+            if new_pw:
+                menu_navigator.save_password(new_pw)
+                print(f"Password updated successfully.")
+                dialog.destroy()
+
+        ctk.CTkButton(btn_frame, text="취소", width=60, height=28,
+                      corner_radius=8, fg_color=COLORS["bg_tertiary"],
+                      hover_color=COLORS["hover"],
+                      text_color=COLORS["text_primary"],
+                      font=("SF Pro Display", 12),
+                      command=dialog.destroy).pack(side="right", padx=(4, 0))
+
+        ctk.CTkButton(btn_frame, text="저장", width=60, height=28,
+                      corner_radius=8, fg_color=COLORS["accent_blue"],
+                      hover_color="#0070E0",
+                      text_color="white",
+                      font=("SF Pro Display", 12, "bold"),
+                      command=do_save).pack(side="right")
+
+        # Close on Escape
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
+        new_entry.bind("<Return>", lambda e: do_save())
 
     def center_window(self):
         screen_width = self.winfo_screenwidth()

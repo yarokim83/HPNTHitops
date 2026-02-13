@@ -67,6 +67,31 @@ def force_activate_window(hwnd):
 # Shared Functions (Used by both Purchase and M&C flows)
 # ============================================================
 
+def get_password():
+    """Read password from config.json, or return default."""
+    import json
+    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            return config.get('password', 'fdjk213!@')
+    except:
+        return 'fdjk213!@'
+
+def save_password(new_password):
+    """Save password to config.json."""
+    import json
+    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+    config = {}
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+    except:
+        pass
+    config['password'] = new_password
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
 def ensure_app_ready():
     """
     Common pre-processing: Launch → Login → Maximize → Foreground.
@@ -74,7 +99,7 @@ def ensure_app_ready():
     Returns True if app is ready, False on failure.
     """
     exe_path = r"C:\Program Files (x86)\Hyundai-UNI\HITOPSIII\Hitops3.exe"
-    password = "fdjk213!@"
+    password = get_password()
     
     # Step 1: Launch (if not running)
     if not is_hitops_running():
