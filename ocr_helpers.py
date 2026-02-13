@@ -149,6 +149,63 @@ def find_text_in_image(screenshot, target_text, region="full"):
         # Suppress frequent errors
         return None
 
+
+def find_all_text_in_image(screenshot, target_text, region="full"):
+    """
+    Find ALL occurrences of text using Tesseract OCR.
+    Returns a list of Box objects, or empty list if none found.
+    """
+    if not _tesseract_available:
+        if not init_tesseract():
+             return []
+    
+    try:
+        import pytesseract
+        
+        if region == "top":
+            w, h = screenshot.size
+            screenshot = screenshot.crop((0, 0, w, min(150, h)))
+        elif region == "header":
+            w, h = screenshot.size
+            screenshot = screenshot.crop((0, 0, w, min(100, h)))
+        
+        target_type = "header" if region == "header" else "text"
+        processed, scale = _preprocess_extreme(screenshot, target=target_type)
+        
+        config = '--psm 11 --oem 1'
+        data = pytesseract.image_to_data(processed, output_type=pytesseract.Output.DICT, config=config)
+        
+        class Box:
+            def __init__(self, l, t, w, h):
+                self.left = l
+                self.top = t
+                self.width = w
+                self.height = h
+        
+        results = []
+        n_boxes = len(data['text'])
+        target_lower = target_text.lower()
+        
+        for i in range(n_boxes):
+            conf_val = int(data['conf'][i])
+            if conf_val < 30:
+                continue
+            text = data['text'][i].strip()
+            if not text:
+                continue
+            if target_lower in text.lower():
+                left = int(data['left'][i] / scale)
+                top = int(data['top'][i] / scale)
+                width = int(data['width'][i] / scale)
+                height = int(data['height'][i] / scale)
+                print(f"OCR found '{text}' (conf: {conf_val}%) at ({left}, {top})")
+                results.append(Box(left, top, width, height))
+        
+        return results
+        
+    except Exception as e:
+        return []
+
 def find_inventory_menu(screenshot):
     """
     Finds the 'Inventory' menu item.

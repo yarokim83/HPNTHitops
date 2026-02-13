@@ -63,118 +63,118 @@ def run_mc_sequence():
     """
     print("Starting M&C Automation Sequence...")
     
-    # Step 0: Common Launch/Login/Maximize
-    if not ensure_app_ready():
-        print("App initialization failed. Aborting M&C sequence.")
-        return False
-
-    print("Searching for Monitoring Menu...")
-    
-    assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
-    monitoring_img = os.path.join(assets_dir, 'monitoring_menu.png')
-    mc_item_img = os.path.join(assets_dir, 'mc_menu_item.png')
-    
-    # Step 2: Find and Hover Monitoring (with Retry and OCR fallback)
-    loc_monitoring = None
-    for i in range(10): # Try for 10 seconds
-        # 1. Image Search
-        loc_monitoring = locate_on_all_screens(monitoring_img, confidence_val=0.7)
+    # Check if M&C window is already open
+    _, mc_hwnd = roi_helpers.get_mc_window_rect()
+    if mc_hwnd:
+        print(f"Monitoring & Control window detected (HWND: {mc_hwnd}). Skipping initial navigation.")
+        try:
+            # Maximize and bring to front
+            win32gui.ShowWindow(mc_hwnd, win32con.SW_MAXIMIZE)
+            win32gui.SetForegroundWindow(mc_hwnd)
+            time.sleep(1.0)
+            
+            # Click center of M&C window to ensure true input focus
+            rect = win32gui.GetWindowRect(mc_hwnd)
+            cx = (rect[0] + rect[2]) // 2
+            cy = (rect[1] + rect[3]) // 2
+            pyautogui.click(cx, cy)
+            time.sleep(1.0)
+            print(f"M&C window maximized and focused (clicked center at {cx}, {cy}).")
+        except Exception as e:
+            print(f"Warning: Could not activate M&C window: {e}")
         
-        # 2. OCR Fallback (If image search fails)
-        if not loc_monitoring:
-            screenshot = ImageGrab.grab(all_screens=True)
-            res = ocr_helpers.find_text_in_image(screenshot, "Monitoring")
-            if res:
-                # Add virtual screen offset
-                left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
-                top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
-                # Calculate center from Box object
-                center_x = res.left + (res.width / 2) + left_offset
-                center_y = res.top + (res.height / 2) + top_offset
-                loc_monitoring = (center_x, center_y)
+        # Proceed to searching for Vessel menu
+        goto_vessel = True
+    else:
+        print("Monitoring & Control window not found. Performing full navigation sequence...")
+        # Step 0: Common Launch/Login/Maximize
+        if not ensure_app_ready():
+            print("App initialization failed. Aborting M&C sequence.")
+            return False
+        goto_vessel = False
+
+    assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
+    
+    if not goto_vessel:
+        print("Searching for Monitoring Menu...")
+        monitoring_img = os.path.join(assets_dir, 'monitoring_menu.png')
+        mc_item_img = os.path.join(assets_dir, 'mc_menu_item.png')
+        
+        # Step 2: Find and Hover Monitoring (with Retry and OCR fallback)
+        loc_monitoring = None
+        for i in range(10): # Try for 10 seconds
+            # 1. Image Search
+            loc_monitoring = locate_on_all_screens(monitoring_img, confidence_val=0.7)
+            
+            # 2. OCR Fallback (If image search fails)
+            if not loc_monitoring:
+                screenshot = ImageGrab.grab(all_screens=True)
+                res = ocr_helpers.find_text_in_image(screenshot, "Monitoring")
+                if res:
+                    # Add virtual screen offset
+                    left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
+                    top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
+                    # Calculate center from Box object
+                    center_x = res.left + (res.width / 2) + left_offset
+                    center_y = res.top + (res.height / 2) + top_offset
+                    loc_monitoring = (center_x, center_y)
+
+            if loc_monitoring:
+                break
+                
+            time.sleep(1)
+            print(f"Searching for Monitoring... ({i+1}/10)")
 
         if loc_monitoring:
-            break
+            print(f"Hovering over Monitoring at {loc_monitoring}...")
+            pyautogui.moveTo(loc_monitoring)
+            time.sleep(1.0) # Wait for submenu
             
-        time.sleep(1)
-        print(f"Searching for Monitoring... ({i+1}/10)")
+            # Step 3: Click M&C
+            loc_mc = locate_on_all_screens(mc_item_img, confidence_val=0.7)
+            # Detailed retry for M&C item too
+            if not loc_mc:
+                 for j in range(5):
+                     time.sleep(0.5)
+                     loc_mc = locate_on_all_screens(mc_item_img, confidence_val=0.7)
+                     if loc_mc: break
 
-    if loc_monitoring:
-        print(f"Hovering over Monitoring at {loc_monitoring}...")
-        pyautogui.moveTo(loc_monitoring)
-        time.sleep(1.0) # Wait for submenu
-        
-        # Step 3: Click M&C
-        loc_mc = locate_on_all_screens(mc_item_img, confidence_val=0.7)
-        # Detailed retry for M&C item too
-        if not loc_mc:
-             for j in range(5):
-                 time.sleep(0.5)
-                 loc_mc = locate_on_all_screens(mc_item_img, confidence_val=0.7)
-                 if loc_mc: break
-
-        if loc_mc:
-            print(f"Clicking M&C Menu Item at {loc_mc}...")
-            pyautogui.click(loc_mc)
-            print("M&C clicked. Waiting for Monitoring & Control window to open...")
-            
-            print("M&C clicked. Waiting for window...")
-            time.sleep(3.0)
-            
-            # Step 4: Click "Vessel" menu (small text in top menu bar)
-            print("Step 4: Searching for Vessel menu...")
-            loc_vessel = None
-            
-            for v in range(10):
-                # Image search first
-                vessel_img = os.path.join(assets_dir, 'vessel_menu.png')
-                if os.path.exists(vessel_img):
-                    loc_vessel = locate_on_all_screens(vessel_img, confidence_val=0.7)
-                
-                # OCR fallback - Global Search (Same as Monitoring/Maintenance)
-                if not loc_vessel:
-                    screenshot = ImageGrab.grab(all_screens=True)
-                    # Search full screen for "Vessel"
-                    res = ocr_helpers.find_text_in_image(screenshot, "Vessel")
-                    
-                    if res:
-                        # Add virtual screen offset
-                        left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
-                        top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
-                        # Calculate center from Box object
-                        center_x = res.left + (res.width / 2) + left_offset
-                        center_y = res.top + (res.height / 2) + top_offset
-                        loc_vessel = (center_x, center_y)
-                        print(f"OCR found Vessel at ({center_x}, {center_y})")
-                
-                if loc_vessel:
-                    break
-                time.sleep(1)
-                print(f"Searching for Vessel... ({v+1}/10)")
-            
-            if loc_vessel:
-                print(f"Clicking Vessel at {loc_vessel}...")
-                pyautogui.click(loc_vessel)
-                
-                # Step 5: Click "Berthing Schedule"
-                print("Step 5: Searching for Berthing Schedule...")
-                time.sleep(2.0)  # Wait for Vessel menu to render
-                
-                bs_img = os.path.join(assets_dir, 'berthing_schedule.png')
-                loc_bs = None
-                if os.path.exists(bs_img):
-                    for b in range(10):
-                        loc_bs = locate_on_all_screens(bs_img, confidence_val=0.7)
-                        if loc_bs:
-                            break
-                        time.sleep(1)
-                        print(f"Searching for Berthing Schedule... ({b+1}/10)")
-                
-                if loc_bs:
-                    print(f"Clicking Berthing Schedule at {loc_bs}...")
-                    pyautogui.click(loc_bs)
-                else:
-                    print("Berthing Schedule menu not found.")
+            if loc_mc:
+                print(f"Clicking M&C Menu Item at {loc_mc}...")
+                pyautogui.click(loc_mc)
+                print("M&C clicked. Waiting for window...")
+                time.sleep(3.0)
+            else:
+                print("M&C menu item not found.")
+                return False
+        else:
+            print("Monitoring menu not found.")
+            return False
+    
+    # Step 4: Open "Vessel" menu via Alt+V shortcut
+    # First ensure M&C window has focus
+    _, mc_hwnd_now = roi_helpers.get_mc_window_rect()
+    if mc_hwnd_now:
+        try:
+            win32gui.SetForegroundWindow(mc_hwnd_now)
+            time.sleep(0.5)
+            print(f"M&C window focused (HWND: {mc_hwnd_now})")
+        except Exception as e:
+            print(f"Warning: Could not focus M&C window: {e}")
+    
+    print("Step 4: Opening Vessel menu (Alt+V)...")
+    pyautogui.hotkey('alt', 'v')
+    time.sleep(2.0)  # Wait for Vessel menu to open
+    print("Alt+V sent. Vessel menu should be open.")
+    
+    # Step 5: Select "Berthing Schedule" via keyboard navigation
+    # Berthing Schedule is the 10th item in the Vessel dropdown menu
+    print("Step 5: Navigating to Berthing Schedule (Down x9 + Enter)...")
+    for i in range(9):
+        pyautogui.press('down')
+        time.sleep(0.1)
+    pyautogui.press('enter')
+    print("Berthing Schedule selected via keyboard.")
 
 def ensure_hitops_maximized():
     """
