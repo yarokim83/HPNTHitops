@@ -124,7 +124,7 @@ class PRMakerWidget(ctk.CTk):
             corner_radius=16, font=("SF Pro Display", 16),
             fg_color="transparent", hover_color=COLORS["hover"],
             text_color=COLORS["text_secondary"],
-            command=self.show_password_dialog
+            command=self.show_settings_dialog
         )
         self.btn_settings.pack(side="left", padx=2, pady=6)
 
@@ -277,8 +277,9 @@ class PRMakerWidget(ctk.CTk):
             self.pr_visible = True
             self.desc_entry.focus_set()
 
-    def show_password_dialog(self):
-        """Apple-style floating password change dialog."""
+
+    def show_settings_dialog(self):
+        """Apple-style floating settings dialog."""
         dialog = ctk.CTkToplevel(self)
         dialog.title("")
         dialog.overrideredirect(True)
@@ -288,7 +289,7 @@ class PRMakerWidget(ctk.CTk):
         # Position above the widget
         wx = self.winfo_x()
         wy = self.winfo_y()
-        dw, dh = 280, 180
+        dw, dh = 280, 240
         dialog.geometry(f"{dw}x{dh}+{wx}+{wy - dh - 8}")
 
         # Container with border
@@ -298,10 +299,38 @@ class PRMakerWidget(ctk.CTk):
         container.pack(fill="both", expand=True, padx=2, pady=2)
 
         # Title
-        title_label = ctk.CTkLabel(container, text="비밀번호 변경",
+        title_label = ctk.CTkLabel(container, text="설정",
                                    font=("SF Pro Display", 14, "bold"),
                                    text_color=COLORS["text_primary"])
         title_label.pack(pady=(12, 6))
+
+        # ── Startup Toggle ──
+        startup_frame = ctk.CTkFrame(container, fg_color="transparent")
+        startup_frame.pack(fill="x", padx=16, pady=(0, 10))
+        
+        is_startup = self.is_in_startup()
+        startup_var = ctk.BooleanVar(value=is_startup)
+        
+        def on_startup_toggle():
+            self.toggle_startup(startup_var.get())
+
+        ctk.CTkCheckBox(startup_frame, text="Windows 시작 시 자동 실행",
+                        variable=startup_var, command=on_startup_toggle,
+                        font=("SF Pro Display", 12),
+                        text_color=COLORS["text_primary"],
+                        fg_color=COLORS["accent_green"],
+                        hover_color=COLORS["bg_tertiary"],
+                        border_color=COLORS["separator"],
+                        corner_radius=6,
+                        checkbox_height=18, checkbox_width=18).pack(side="left")
+
+        # ── Separator ──
+        ctk.CTkFrame(container, height=1, fg_color=COLORS["separator"]).pack(fill="x", padx=16, pady=4)
+
+        # ── Password Section ──
+        ctk.CTkLabel(container, text="비밀번호 변경",
+                     font=("SF Pro Display", 12, "bold"),
+                     text_color=COLORS["text_secondary"]).pack(pady=(8, 4))
 
         # Current password (read-only, masked)
         current_pw = menu_navigator.get_password()
@@ -333,20 +362,20 @@ class PRMakerWidget(ctk.CTk):
                                  placeholder_text_color=COLORS["text_secondary"],
                                  font=("SF Pro Display", 12))
         new_entry.pack(side="left", fill="x", expand=True, padx=(4, 0))
-        new_entry.focus_set()
+        # new_entry.focus_set() # Don't auto-focus, let user click if they want to change pw
 
         # Buttons
         btn_frame = ctk.CTkFrame(container, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=16, pady=(8, 12))
+        btn_frame.pack(fill="x", padx=16, pady=(12, 12))
 
         def do_save():
             new_pw = new_entry.get().strip()
             if new_pw:
                 menu_navigator.save_password(new_pw)
                 print(f"Password updated successfully.")
-                dialog.destroy()
+            dialog.destroy()
 
-        ctk.CTkButton(btn_frame, text="취소", width=60, height=28,
+        ctk.CTkButton(btn_frame, text="닫기", width=60, height=28,
                       corner_radius=8, fg_color=COLORS["bg_tertiary"],
                       hover_color=COLORS["hover"],
                       text_color=COLORS["text_primary"],
@@ -363,6 +392,42 @@ class PRMakerWidget(ctk.CTk):
         # Close on Escape
         dialog.bind("<Escape>", lambda e: dialog.destroy())
         new_entry.bind("<Return>", lambda e: do_save())
+
+    def get_startup_path(self):
+        return os.path.join(os.getenv('APPDATA'), r'Microsoft\Windows\Start Menu\Programs\Startup', 'PRMakerWidget.lnk')
+
+    def is_in_startup(self):
+        return os.path.exists(self.get_startup_path())
+
+    def toggle_startup(self, enable):
+        shortcut_path = self.get_startup_path()
+        if enable:
+            try:
+                import win32com.client
+                shell = win32com.client.Dispatch("WScript.Shell")
+                shortcut = shell.CreateShortCut(shortcut_path)
+                shortcut.Targetpath = sys.executable if getattr(sys, 'frozen', False) else sys.executable
+                if getattr(sys, 'frozen', False):
+                     shortcut.Targetpath = sys.executable
+                else:
+                     # Running as script: pythonw.exe PRMakerWidget.py
+                     # But better to point to a bat file or just the python executable with arguments
+                     shortcut.Arguments = f'"{os.path.abspath(__file__)}"'
+                
+                shortcut.WorkingDirectory = os.path.dirname(os.path.abspath(__file__))
+                shortcut.IconLocation = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'taskbar_icon.png')
+                shortcut.save()
+                print(f"Startup shortcut created at {shortcut_path}")
+            except Exception as e:
+                print(f"Failed to create startup shortcut: {e}")
+        else:
+            if os.path.exists(shortcut_path):
+                try:
+                    os.remove(shortcut_path)
+                    print("Startup shortcut removed.")
+                except Exception as e:
+                    print(f"Failed to remove startup shortcut: {e}")
+
 
     def center_window(self):
         screen_width = self.winfo_screenwidth()

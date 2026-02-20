@@ -233,18 +233,22 @@ def find_purchase_request_menu(screenshot):
     
     return None
 
+
 def find_mr_submenu(screenshot):
     """
-    Finds M&R submenu in the dropdown area.
+    Finds M&R submenu in the dropdown/side area.
     """
-    # Search more keywords with lower confidence needs
-    variations = ["Maintenance", "Protection", "Machinery", "M&R", "Hull"] 
+    variations = ["Maintenance", "Protection", "Machinery", "M&R", "Hull", "Inventory"] 
     
     for text in variations:
         result = find_text_in_image(screenshot, text, region="full")
         if result:
-            # Additional validation: should be in reasonable dropdown area
-            if result.top > 50 and result.top < 400:  # Not in header, not in footer
+            # Dropdown/Side menus are typically on the far left (X < 500)
+            # and distinct from the main tile area.
+            # Maintenance tile is at X~80 (Logical) or X~400 (Maximized).
+            # But sidebar submenus are usually at X < 300.
+            if result.left < 400:
+                print(f"OCR: Found Submenu '{text}' at X={result.left}, Y={result.top}")
                 return result
             
     return None

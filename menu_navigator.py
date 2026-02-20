@@ -17,6 +17,59 @@ import roi_helpers
 import ocr_helpers
 import login_manager # Import Login Manager
 
+def draw_crosshair(img, x, y, color="red", label="Target"):
+    """Draws a crosshair on an image for visual ROI verification."""
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(img)
+    size = 20
+    draw.line((x - size, y, x + size, y), fill=color, width=2)
+    draw.line((x, y - size, x, y + size), fill=color, width=2)
+    draw.text((x + 5, y + 5), label, fill=color)
+
+def verify_and_execute_mouse(log_x, log_y, action="click", jitter=0):
+    """
+    Moves mouse to logical coordinates, verifies it reached there via OS,
+    and performs the action. Uses win32api as fallback.
+    """
+    print(f"[Mouse] Targeting Log ({int(log_x)}, {int(log_y)}) -> Action: {action}")
+    
+    # 1. First Attempt: PyAutoGUI
+    pyautogui.moveTo(log_x, log_y, duration=0.2)
+    
+    # OS Verification
+    time.sleep(0.1)
+    actual_log_x, actual_log_y = pyautogui.position()
+    dist = ((log_x - actual_log_x)**2 + (log_y - actual_log_y)**2)**0.5
+    
+    # 2. Fallback: Win32 API if OS position mismatch
+    if dist > 10:
+        print(f"  [Position Verify] MISMATCH! OS reports ({actual_log_x}, {actual_log_y}). Retrying via Win32...")
+        # win32api.SetCursorPos takes SCREEN coordinates (Logical)
+        win32api.SetCursorPos((int(log_x), int(log_y)))
+        time.sleep(0.1)
+        actual_log_x, actual_log_y = pyautogui.position()
+        dist = ((log_x - actual_log_x)**2 + (log_y - actual_log_y)**2)**0.5
+    
+    if dist <= 10:
+        print(f"  [Position Verify] SUCCESS (Actual: {actual_log_x}, {actual_log_y})")
+    else:
+        print(f"  [Position Verify] FAILED! Distance: {int(dist)}px")
+
+    # 3. Perform Action
+    if action == "click":
+        pyautogui.click()
+        print("  [Action] Click performed.")
+    elif action == "hover":
+        if jitter > 0:
+            print(f"  [Action] Hover with {jitter}px jitter...")
+            for _ in range(2):
+                pyautogui.moveRel(jitter, jitter, duration=0.1)
+                pyautogui.moveRel(-jitter, -jitter, duration=0.1)
+        else:
+            print("  [Action] Hover static.")
+    
+    return actual_log_x, actual_log_y
+
 def force_activate_window(hwnd):
     """
     Force-activate a window even when SetForegroundWindow alone fails.
@@ -638,8 +691,10 @@ def enter_pr_description(text):
     if field_loc:
         print(f"Found Field at {field_loc}. Clicking center...")
         
-        # Click directly on the found center (since image includes the box)
-        pyautogui.click(field_loc)
+        # Click to the right of the label to hit the text box
+        target_x = field_loc[0] + 100
+        target_y = field_loc[1]
+        pyautogui.click(target_x, target_y)
         time.sleep(0.2) # Reduced
         pyautogui.click() # Double click to ensure focus
         
@@ -687,7 +742,7 @@ def update_need_by_date():
         
         # Click to focus
         pyautogui.click(target_x, target_y)
-        time.sleep(0.2) # Reduced from 0.5
+        time.sleep(0.2)
         
         # Calculate New Date (Today + 1 Month)
         from datetime import datetime
@@ -701,7 +756,8 @@ def update_need_by_date():
         # Overwrite Field
         pyautogui.hotkey('ctrl', 'a')
         time.sleep(0.1)
-        # Deleted 'delete' key press to prevent accidental file deletion on Desktop
+        pyautogui.press('delete')
+        time.sleep(0.1)
         
         # Fast Typing
         pyautogui.write(new_date_str, interval=0.02) # Fast typing
@@ -1269,289 +1325,177 @@ def stop_popup_watchdog():
     popup_watchdog_active = False
 
 
-def smart_navigate_to_pr():
+def click_pr_menu():
     """
-    Event-Driven Navigation:
-    Continuously scans for [Purchase Request, Inventory, Maintenance] menus simultaneously.
-    Click Priority: PR Menu (Goal) > Inventory (Mid) > Maintenance (Root).
-    Fast reaction time by using a single screenshot for multiple checks.
+    PR Automation Sequence (Linear Logic):
+    1. Launch/Login/Maximize HI-TOPS
+    2. Click 'Maintenance & Repair' Tile
+    3. Click 'Purchase Request' (in submenu)
+    Uses verify_and_execute_mouse for robust physical execution.
     """
+    print("Starting PR Automation Sequence (Linear)...")
+    
+    # Step 0: Common Launch/Login/Maximize
+    if not ensure_app_ready():
+        print("App initialization failed. Aborting PR sequence.")
+        return False
+    
     assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
     
-    # Asset Map - Updated for tile-based UI
-    targets = {
-        'pr_goal': os.path.join(assets_dir, 'purchase_request_menu.png'),
-        'inventory_mid': os.path.join(assets_dir, 'inventory_menu.png'),
-        'repair_icon': os.path.join(assets_dir, 'repair_icon.png'),  # Main tile icon
-        'mr_submenu': os.path.join(assets_dir, 'mr_submenu_btn.png') # Optional
-    }
+    # Step 1: Find and Click Maintenance & Repair Tile
+    print("Searching for Maintenance & Repair Tile...")
+    repair_icon_img = os.path.join(assets_dir, 'repair_icon.png')
     
-    # Verify assets
-    for name, path in targets.items():
-        if not os.path.exists(path):
-            print(f"Warning: Asset {name} missing at {path}")
-
-    print("Starting Smart Navigation (Parallel Check)...")
-    start_time = time.time()
-    TIMEOUT = 60
+    # Get Hitops window bounds to filter OCR (avoid false positives from other monitors)
+    hitops_rect, _ = roi_helpers.get_hitops_window_rect()
+    hitops_x_max = hitops_rect[2] if hitops_rect else 1600  # right edge of Hitops window (logical)
     
-    # Start Background Popup Watchdog
-    start_popup_watchdog()
+    loc_tile = None
+    for i in range(10):
+        # 1. Image Search
+        loc_tile = locate_on_all_screens(repair_icon_img, confidence_val=0.7)
+        
+        # 2. OCR Fallback (Maintenance) — restricted to Hitops window area
+        if not loc_tile:
+            screenshot = ImageGrab.grab(all_screens=True)
+            left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
+            top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
+            
+            res = ocr_helpers.find_text_in_image(screenshot, "Maintenance")
+            
+            if res:
+                center_x = res.left + (res.width / 2) + left_offset
+                center_y = res.top + (res.height / 2) + top_offset
+                
+                # Filter: must be within Hitops window x-range (not VS Code / secondary monitor)
+                if center_x <= hitops_x_max:
+                    print(f"  OCR Candidate (in Hitops): {center_x}, {center_y}")
+                    loc_tile = (center_x, center_y)
+                else:
+                    print(f"  OCR Candidate rejected (x={center_x:.0f} > hitops_x_max={hitops_x_max})")
+        
+        if loc_tile:
+            break
+        time.sleep(1)
+        print(f"Searching for Maintenance Tile... ({i+1}/10)")
     
+    if not loc_tile:
+        print("Maintenance & Repair tile not found.")
+        return False
+    
+    print(f"Clicking Maintenance Tile at {loc_tile}...")
+    
+    # Debug Proof for Tile Click
     try:
-        # State tracking to avoid spam-clicking the same parent
-        last_clicked = None
-        last_clicked_time = 0  # To track when we last clicked/hovered
-        saved_debug = False
-        
-        # Popup Handling Asset
-        popup_asset = os.path.join(assets_dir, 'popup_invalid_parameter.png')
-        
-        # 1. Activate & Maximize Window FIRST (Using shared function)
-        ensure_hitops_maximized()
-                
-        # 2. Get ROI coordinates (AFTER maximization)
-        # Re-fetch rect because maximization changed it
-        hitops_rect, _ = roi_helpers.get_hitops_window_rect()
-        
-        if hitops_rect:
-            left_offset, top_offset, right_offset, bottom_offset = hitops_rect
-            print(f"ROI Mode: Scanning Hitops window only ({right_offset-left_offset}x{bottom_offset-top_offset}px)")
-            print(f"Window Position: Left={left_offset}, Top={top_offset}")
-        else:
-            # Fallback to full screen if window not found
-            left_offset, top_offset = 0, 0
-            hitops_hwnd = None
-            print("Warning: Hitops window lost after activation, using full-screen scan")
+        screenshot = ImageGrab.grab(all_screens=True)
+        draw_crosshair(screenshot, loc_tile[0], loc_tile[1], label="Maintenance Tile")
+        debug_path = os.path.join(assets_dir, 'debug_tile_click.png')
+        screenshot.save(debug_path)
+    except: pass
 
-        loop_count = 0
-        while time.time() - start_time < TIMEOUT:
-            # Check for blocking popup (Watchdog already running, but manually check just in case)
-            check_popup_by_title()
+    # Use verify_and_execute_mouse for click
+    verify_and_execute_mouse(loc_tile[0], loc_tile[1], action="click")
+    time.sleep(2.5) # Wait for window to open
+    
+    # Step 2: Wait for Maintenance & Repair System Window
+    print("Waiting for Maintenance & Repair System Window...")
+    main_rect = None
+    main_hwnd = None
+    for k in range(20):
+        main_rect, main_hwnd = roi_helpers.get_maintenance_window_rect()
+        if main_rect:
+            print(f"Maintenance Window Detected: {main_rect}")
+            break
+        time.sleep(1.0)
+        print(f"Waiting for Maintenance Window... ({k+1}/20)")
+        
+    if not main_rect:
+        print("Maintenance & Repair System window did not appear.")
+        return False
+        
+    # Ensure window is active/maximized
+    try:
+        win32gui.ShowWindow(main_hwnd, win32con.SW_MAXIMIZE)
+        win32gui.SetForegroundWindow(main_hwnd)
+        time.sleep(1.0)
+    except: pass
+
+    # Step 3: Find 'Inventory' Menu in the New Window (with retry)
+    print("Searching for 'Inventory' in Maintenance Window...")
+    
+    inventory_img = os.path.join(assets_dir, 'inventory_menu.png')
+    loc_inventory = None
+    
+    for _ in range(5):
+        loc_inventory = locate_on_all_screens(inventory_img, confidence_val=0.8)
+        if loc_inventory:
+            print(f"Found 'Inventory' via image search at {loc_inventory}")
+            break
+        time.sleep(1.0)
+    
+    if loc_inventory:
+        print(f"Clicking Inventory Menu at {loc_inventory}...")
+        # Debug Proof
+        try:
+            draw_crosshair(screenshot, loc_inventory[0] - v_phys_left, loc_inventory[1] - v_phys_top, label="Inv Target")
+            screenshot.save(os.path.join(assets_dir, 'debug_inventory_click.png'))
+        except: pass
+
+        verify_and_execute_mouse(loc_inventory[0], loc_inventory[1], action="click")
+        time.sleep(1.0)
+        
+        # Step 4: Click Purchase Request
+        pr_goal_img = os.path.join(assets_dir, 'purchase_request_menu.png')
+        
+        print("Searching for Purchase Request menu item...")
+        loc_pr = None
+        for j in range(5):
+            loc_pr = locate_on_all_screens(pr_goal_img, confidence_val=0.7)
+            if loc_pr:
+                break
+            time.sleep(0.5)
+            print(f"Searching for PR item... ({j+1}/5)")
             
-            loop_count += 1
-            if loop_count % 10 == 0:
-                print(f"Scanning... ({int(time.time() - start_time)}s)")
-                
+        # OCR Fallback
+        if not loc_pr:
+            screenshot_full = ImageGrab.grab(all_screens=True)
+            res_pr = ocr_helpers.find_text_in_image(screenshot_full, "Purchase Request")
+            if res_pr:
+                phys_x = res_pr.left + (res_pr.width / 2) + v_phys_left
+                phys_y = res_pr.top + (res_pr.height / 2) + v_phys_top
+                lx, ly = roi_helpers.physical_to_logical(phys_x, phys_y)
+                loc_pr = (lx, ly)
+        
+        if loc_pr:
+            print(f"Clicking Purchase Request at {loc_pr}...")
+            # Save debug proof
             try:
-                # 1. Capture Screen (Multi-monitor Safe)
-                # ROI Cropping removed to prevent coordinate offsets on dual monitors
-                screenshot = ImageGrab.grab(all_screens=True)
-                
-                # Get Virtual Screen Bounds
-                v_screen_left = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
-                v_screen_top = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
+                ss = ImageGrab.grab(all_screens=True)
+                draw_crosshair(ss, loc_pr[0] - v_phys_left, loc_pr[1] - v_phys_top, label="PR Target")
+                ss.save(os.path.join(assets_dir, 'debug_goal_target.png'))
+            except: pass
+            verify_and_execute_mouse(loc_pr[0], loc_pr[1], action="click")
+            print("Purchase Request clicked.")
+            return True
+        else:
+            print("Purchase Request item not found (dropdown didn't open?)")
+            # Save failure screenshot
+            try:
+                fail_shot = ImageGrab.grab(all_screens=True)
+                fail_shot.save(os.path.join(assets_dir, 'debug_pr_fail.png'))
+            except: pass
+            return False
 
-                # Always use full screen search for reliability
-                scan_offset_x = v_screen_left
-                scan_offset_y = v_screen_top
-                
-                # Update hitops_rect just for reference/debug
-                hitops_rect, _ = roi_helpers.get_hitops_window_rect()
+    print("Inventory menu not found in window.")
+    # Save failure screenshot
+    try:
+        screenshot.save(os.path.join(assets_dir, 'debug_pr_fail.png'))
+    except: pass
+    return False
 
-                
-                # DEBUG: Save screenshot
-                if not saved_debug:
-                    debug_path = os.path.join(assets_dir, 'debug_smart_nav.png')
-                    screenshot.save(debug_path)
-                    print(f"DEBUG: Saved screenshot to {debug_path}. Offset: ({scan_offset_x}, {scan_offset_y})")
-                    saved_debug = True
-
-
-                # logic: if we clicked something but haven't found the next target after 5 seconds, reset state
-                if last_clicked and (time.time() - last_clicked_time > 5.0):
-                    print(f"Action '{last_clicked}' seems to have failed (no progress for 5s). Resetting state to retry...")
-                    last_clicked = None
-                    
-                # 3. Check for GOAL (PR Menu) - OCR FIRST, Image Fallback
-                if os.path.exists(targets['pr_goal']):
-                    box = None
-                    
-                    # Try OCR first
-                    try:
-                        box = ocr_helpers.find_purchase_request_menu(screenshot)
-                        if box:
-                            print(f"FOUND GOAL via OCR: Purchase Request Menu")
-                    except:
-                        pass
-                    
-                    # Fallback to Image
-                    if box is None:
-                        box = safe_locate(targets['pr_goal'], screenshot, confidence=0.8)
-                        if box:
-                            print(f"FOUND GOAL via Image: Purchase Request Menu")
-
-                    if box:
-                        print(f"Clicking Purchase Request Menu...")
-                        center_x = box.left + (box.width / 2) + scan_offset_x
-                        center_y = box.top + (box.height / 2) + scan_offset_y
-                        pyautogui.click(center_x, center_y)
-                        print("Navigation Complete.")
-                        return True
-
-                # 4. Check for M&R Submenu (only if we haven't already entered M&R)
-                if last_clicked != 'mr_submenu':
-                    box = None
-                    
-                    # Try OCR first
-                    try:
-                        box = ocr_helpers.find_mr_submenu(screenshot)
-                        if box:
-                            print(f"Found M&R Submenu via OCR!")
-                    except:
-                        pass
-                    
-                    # Fallback to Image
-                    if box is None and os.path.exists(targets['mr_submenu']):
-                         box = safe_locate(targets['mr_submenu'], screenshot, confidence=0.6)
-                         if box:
-                             print(f"Found M&R Submenu via Image")
-
-                    if box:
-                        print(f"Clicking M&R Submenu...")
-                        center_x = box.left + (box.width / 2) + scan_offset_x
-                        center_y = box.top + (box.height / 2) + scan_offset_y
-                        
-                        # DEBUG: Visual Click Confirmation
-                        try:
-                            from PIL import ImageDraw
-                            debug_click_img = screenshot.copy()
-                            draw = ImageDraw.Draw(debug_click_img)
-                            r = 10
-                            # Draw directly on valid screenshot coordinates (box is relative to screenshot)
-                            rel_x = box.left + (box.width / 2)
-                            rel_y = box.top + (box.height / 2)
-                            draw.ellipse((rel_x-r, rel_y-r, rel_x+r, rel_y+r), outline="red", width=3)
-                            debug_path = os.path.join(assets_dir, 'debug_last_click.png')
-                            debug_click_img.save(debug_path)
-                            print(f"DEBUG: Saved click target visual to {debug_path}")
-                        except Exception as e:
-                            print(f"Debug save failed: {e}")
-
-                        pyautogui.click(center_x, center_y)
-                        last_clicked = 'mr_submenu'
-                        last_clicked_time = time.time()
-                        time.sleep(0.5)
-                        continue
-                    else:
-                        if loop_count % 10 == 0:
-                            print("  → M&R submenu not found (yet)")
-
-                # 5. Check for Intermediate (Inventory) - OCR FIRST, Image Fallback
-                if last_clicked != 'inventory':
-                    box = None
-                    
-                    # Try OCR first
-                    try:
-                        box = ocr_helpers.find_inventory_menu(screenshot)
-                        if box:
-                            print(f"Found Inventory via OCR!")
-                    except Exception as e:
-                        if loop_count % 10 == 0:
-                            print(f"  OCR search failed: {e}, falling back to image matching")
-                    
-                    # Fallback to image matching
-                    if box is None and os.path.exists(targets['inventory_mid']):
-                        box = safe_locate(targets['inventory_mid'], screenshot, confidence=0.55)
-                        if box:
-                            print(f"Found Inventory via image matching")
-                    
-                    if box:
-                        print(f"Clicking Inventory Menu...")
-                        center_x = box.left + (box.width / 2) + scan_offset_x
-                        center_y = box.top + (box.height / 2) + scan_offset_y
-                        pyautogui.click(center_x, center_y)
-                        last_clicked = 'inventory'
-                        last_clicked_time = time.time()
-                        time.sleep(0.8)
-                        continue
-                    else:
-                        if loop_count % 10 == 0:
-                            print("  → Inventory menu not found (yet)")
-
-                # 6. Check for Repair Tile Icon
-                if last_clicked != 'root':
-                    box = None
-                    if os.path.exists(targets['repair_icon']):
-                        try:
-                            all_matches = list(pyautogui.locateAll(targets['repair_icon'], screenshot, confidence=0.75))
-                            if len(all_matches) > 0:
-                                box = all_matches[0] 
-                        except Exception as e:
-                             print(f"LocateAll failed: {e}")
-                             box = safe_locate(targets['repair_icon'], screenshot, confidence=0.75)
-
-                    # OCR Fallback for Repair Tile
-                    if box is None:
-                        try:
-                            box = ocr_helpers.find_maintenance_tile(screenshot)
-                            if box:
-                                print("Found Repair Tile via OCR!")
-                        except Exception as e:
-                            if loop_count % 10 == 0:
-                                print(f"OCR Tile search failed: {e}")
-
-                    if box:
-                        print(f"Found Repair Icon!")
-                        center_x = box.left + (box.width / 2) + scan_offset_x
-                        center_y = box.top + (box.height / 2) + scan_offset_y
-                        
-                        # Definite Hover
-                        print(f"Moving to Repair Icon at ({center_x}, {center_y})...")
-                        pyautogui.moveTo(center_x, center_y, duration=0.5)
-                        
-                        print("Waiting 3 seconds for UI stability...")
-                        time.sleep(3.0) 
-
-                        # Click the tile
-                        pyautogui.click() 
-                        
-                        # Immediately check for popup
-                        time.sleep(0.5)
-                        check_popup_by_title()
-                        
-                        last_clicked = 'root'
-                        last_clicked_time = time.time()
-                        time.sleep(1.0) 
-                        
-                        check_popup_by_title()
-                        print("Submenu should be visible now, searching for Inventory...")
-                        continue
-
-            except Exception as e:
-                print(f"Smart Nav Inner Error: {e}")
-
-            time.sleep(0.2) # Fast loop
-            
-            # Fallback: Check Taskbar Icon
-            if loop_count % 15 == 0:
-                print("  → Nothing found in ROI. Checking Taskbar for icon...")
-                taskbar_asset = os.path.join(assets_dir, 'taskbar_icon.png')
-                if os.path.exists(taskbar_asset):
-                     full_shot = ImageGrab.grab(all_screens=True)
-                     tb_box = locate_with_scaling(taskbar_asset, full_shot, confidence=0.7, scales=[1.0, 1.25])
-                     if tb_box:
-                         print(f"Found Hitops Taskbar Icon! Clicking to activate...")
-                         click_x = tb_box.left + (tb_box.width / 2) + v_left
-                         click_y = tb_box.top + (tb_box.height / 2) + v_top
-                         pyautogui.click(click_x, click_y)
-                         time.sleep(2.5) 
-                         last_clicked = 'mr_submenu'
-                         last_clicked_time = time.time()
-                         hitops_rect, hitops_hwnd = roi_helpers.get_hitops_window_rect()
-                         continue
-            
-        print("Smart Navigation Timed Out.")
-        # Save timeout screenshot
-        timeout_shot = ImageGrab.grab(all_screens=True)
-        timeout_path = os.path.join(assets_dir, 'debug_timeout.png')
-        timeout_shot.save(timeout_path)
-        print(f"DEBUG: Saved timeout screenshot to {timeout_path}")
-        return False
-
-    except Exception as e:
-        print(f"Smart Nav Critical Error: {e}")
-        return False
-    finally:
-        # Stop Background Popup Watchdog
-        stop_popup_watchdog()
+def smart_navigate_to_pr():
+    """
+    Wrapper for Backward Compatibility.
+    Now redirects to the linear 'click_pr_menu' logic.
+    """
+    return click_pr_menu()
