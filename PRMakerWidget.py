@@ -16,26 +16,40 @@ except ImportError:
     PYNPUT_AVAILABLE = False
     print("Warning: 'pynput' library not found. Global hotkey will not work.")
 
-# ── Apple-style Widget Configuration ──
-WIDGET_WIDTH_FULL = 820
-WIDGET_WIDTH_MINI = 340
-WIDGET_HEIGHT = 72
-ALPHA_VALUE = 0.92
+# ── Liquid Glass Widget Configuration ──
+WIDGET_WIDTH_FULL = 840
+WIDGET_WIDTH_MINI = 300
+WIDGET_HEIGHT = 68
+ALPHA_VALUE = 0.88
 
-# ── Apple Color Palette ──
-COLORS = {
-    "bg":            "#1C1C1E",      # iOS dark background
-    "bg_secondary":  "#2C2C2E",      # Card/surface
-    "bg_tertiary":   "#3A3A3C",      # Hover state
-    "accent_blue":   "#0A84FF",      # iOS blue
-    "accent_green":  "#30D158",      # iOS green
-    "accent_red":    "#FF453A",      # iOS red
-    "accent_orange": "#FF9F0A",      # iOS orange
-    "text_primary":  "#FFFFFF",      # Primary text
-    "text_secondary":"#8E8E93",      # Secondary text
-    "separator":     "#48484A",      # Separator/divider
-    "hover":         "#3A3A3C",      # Button hover
-    "pressed":       "#545456",      # Button pressed
+# ── Apple Liquid Glass Color System ──
+# Inspired by iOS 26 / macOS Tahoe Liquid Glass
+GLASS = {
+    # Glass surfaces
+    "glass_bg":         "#0D0D0F",      # Ultra-dark glass base
+    "glass_surface":    "#1A1A1F",      # Frosted glass panel
+    "glass_elevated":   "#252530",      # Elevated glass card
+    "glass_hover":      "#2E2E3A",      # Hover state
+    "glass_pressed":    "#383845",      # Pressed state
+
+    # Liquid accents (vibrant through glass)
+    "liquid_blue":      "#007AFF",      # Primary action
+    "liquid_cyan":      "#5AC8FA",      # Accent/highlight
+    "liquid_green":     "#30D158",      # Success/Run
+    "liquid_green_dim": "#1B8A3A",      # Green hover
+    "liquid_red":       "#FF453A",      # Danger/Close
+    "liquid_orange":    "#FF9F0A",      # Warning
+    "liquid_purple":    "#BF5AF2",      # Special
+
+    # Typography
+    "text_bright":      "#F5F5F7",      # Primary text (Apple white)
+    "text_mid":         "#A1A1A6",      # Secondary text
+    "text_dim":         "#636366",      # Tertiary/placeholder
+
+    # Structure
+    "border_glass":     "#38383D",      # Glass border (subtle)
+    "border_glow":      "#4A4A52",      # Active border glow
+    "divider":          "#2C2C30",      # Separator line
 }
 
 
@@ -49,36 +63,38 @@ class PRMakerWidget(ctk.CTk):
         # Initialize OCR Engine
         threading.Thread(target=ocr_helpers.init_tesseract, daemon=True).start()
 
-        # ── Window Setup ──
+        # ── Frameless Glass Window ──
         self.title("PR Maker")
         self.geometry(f"{WIDGET_WIDTH_MINI}x{WIDGET_HEIGHT}")
-        self.overrideredirect(True)  # Frameless
+        self.overrideredirect(True)
         self.attributes('-alpha', ALPHA_VALUE)
         self.resizable(False, False)
-        self.configure(fg_color=COLORS["bg"])
+        self.configure(fg_color=GLASS["glass_bg"])
 
-        # Center initially
+        # Center near bottom (dock-style)
         self.center_window()
 
-        # ── Main Container with rounded appearance ──
-        self.main_container = ctk.CTkFrame(
-            self, corner_radius=18, fg_color=COLORS["bg"],
-            border_width=1, border_color=COLORS["separator"]
+        # ── Outer Glass Shell ──
+        self.glass_shell = ctk.CTkFrame(
+            self, corner_radius=22, fg_color=GLASS["glass_surface"],
+            border_width=1, border_color=GLASS["border_glass"]
         )
-        self.main_container.pack(fill="both", expand=True, padx=1, pady=1)
-        self.main_container.grid_columnconfigure(0, weight=0)  # Sidebar
-        self.main_container.grid_columnconfigure(1, weight=0)  # Divider
-        self.main_container.grid_columnconfigure(2, weight=1)  # Inputs
-        self.main_container.grid_rowconfigure(0, weight=1)
+        self.glass_shell.pack(fill="both", expand=True, padx=1, pady=1)
+        self.glass_shell.grid_columnconfigure(0, weight=0)  # Dock
+        self.glass_shell.grid_columnconfigure(1, weight=1)  # Content
+        self.glass_shell.grid_rowconfigure(0, weight=1)
 
-        # ── Dock Bar (Icon Buttons) ──
-        self.dock = ctk.CTkFrame(self.main_container, corner_radius=14, fg_color=COLORS["bg_secondary"])
-        self.dock.grid(row=0, column=0, padx=6, pady=6, sticky="ns")
+        # ── Glass Dock Bar ──
+        self.dock = ctk.CTkFrame(
+            self.glass_shell, corner_radius=16,
+            fg_color="transparent"
+        )
+        self.dock.grid(row=0, column=0, padx=(6, 2), pady=5, sticky="ns")
 
-        # Load Images
+        # Load Icons
         try:
             from PIL import Image
-            icon_size = (36, 36)
+            icon_size = (32, 32)
             self.img_tools = ctk.CTkImage(light_image=Image.open(os.path.join(self.assets_dir, "tools_icon.png")), size=icon_size)
             self.img_mc    = ctk.CTkImage(light_image=Image.open(os.path.join(self.assets_dir, "mc_icon.png")),    size=icon_size)
             self.img_rcc   = ctk.CTkImage(light_image=Image.open(os.path.join(self.assets_dir, "rcc_icon.png")),   size=icon_size)
@@ -86,109 +102,121 @@ class PRMakerWidget(ctk.CTk):
             print(f"Failed to load icons: {e}")
             self.img_tools = self.img_mc = self.img_rcc = None
 
-        # ── Dock Buttons (Apple-style pill buttons) ──
-        btn_size = 52
-        btn_cfg = dict(
+        # ── Dock Buttons (Glass Pill Buttons) ──
+        btn_size = 46
+        glass_btn = dict(
             width=btn_size, height=btn_size,
             corner_radius=14,
             fg_color="transparent",
-            hover_color=COLORS["hover"],
+            hover_color=GLASS["glass_hover"],
             text="",
             border_width=0,
         )
 
-        self.btn_tools = ctk.CTkButton(self.dock, image=self.img_tools,
-                                       command=self.toggle_pr_section, **btn_cfg)
-        self.btn_tools.pack(side="left", padx=4, pady=6)
+        self.btn_tools = ctk.CTkButton(
+            self.dock, image=self.img_tools,
+            command=self.toggle_pr_section, **glass_btn
+        )
+        self.btn_tools.pack(side="left", padx=3, pady=4)
 
-        self.btn_mc = ctk.CTkButton(self.dock, image=self.img_mc,
-                                    command=lambda: threading.Thread(
-                                        target=menu_navigator.run_mc_sequence, daemon=True).start(),
-                                    **btn_cfg)
-        self.btn_mc.pack(side="left", padx=2, pady=6)
+        self.btn_mc = ctk.CTkButton(
+            self.dock, image=self.img_mc,
+            command=lambda: threading.Thread(
+                target=menu_navigator.run_mc_sequence, daemon=True).start(),
+            **glass_btn
+        )
+        self.btn_mc.pack(side="left", padx=2, pady=4)
 
-        self.btn_rcc = ctk.CTkButton(self.dock, image=self.img_rcc,
-                                     command=lambda: threading.Thread(
-                                         target=menu_navigator.click_rcc_menu, daemon=True).start(),
-                                     **btn_cfg)
-        self.btn_rcc.pack(side="left", padx=2, pady=6)
+        self.btn_rcc = ctk.CTkButton(
+            self.dock, image=self.img_rcc,
+            command=lambda: threading.Thread(
+                target=menu_navigator.click_rcc_menu, daemon=True).start(),
+            **glass_btn
+        )
+        self.btn_rcc.pack(side="left", padx=2, pady=4)
 
-        # ── Separator ──
-        self.sep_line = ctk.CTkFrame(self.dock, width=1, height=32,
-                                     corner_radius=0, fg_color=COLORS["separator"])
-        self.sep_line.pack(side="left", padx=4, pady=14)
+        # ── Glass Divider ──
+        self.divider = ctk.CTkFrame(
+            self.dock, width=1, height=28,
+            corner_radius=0, fg_color=GLASS["divider"]
+        )
+        self.divider.pack(side="left", padx=5, pady=16)
 
-        # ── Settings Button (gear icon) ──
+        # ── Settings (Gear) ──
         self.btn_settings = ctk.CTkButton(
-            self.dock, text="⚙", width=32, height=32,
-            corner_radius=16, font=("SF Pro Display", 16),
-            fg_color="transparent", hover_color=COLORS["hover"],
-            text_color=COLORS["text_secondary"],
+            self.dock, text="⚙", width=30, height=30,
+            corner_radius=15, font=("SF Pro Display", 14),
+            fg_color="transparent", hover_color=GLASS["glass_hover"],
+            text_color=GLASS["text_dim"],
             command=self.show_settings_dialog
         )
-        self.btn_settings.pack(side="left", padx=2, pady=6)
+        self.btn_settings.pack(side="left", padx=1, pady=4)
 
-        # ── Close Button (subtle X) ──
+        # ── Close (X) ──
         self.btn_exit = ctk.CTkButton(
-            self.dock, text="✕", width=32, height=32,
-            corner_radius=16, font=("SF Pro Display", 14),
-            fg_color="transparent", hover_color=COLORS["accent_red"],
-            text_color=COLORS["text_secondary"],
+            self.dock, text="✕", width=28, height=28,
+            corner_radius=14, font=("SF Pro Display", 12),
+            fg_color="transparent", hover_color=GLASS["liquid_red"],
+            text_color=GLASS["text_dim"],
             command=self.destroy
         )
-        self.btn_exit.pack(side="left", padx=4, pady=6)
+        self.btn_exit.pack(side="left", padx=(1, 3), pady=4)
 
-        # ── Drag Handle (invisible but functional) ──
-        # Bind drag to the entire dock for easier dragging
+        # ── Glass Drag ──
         self.dock.bind("<Button-1>", self.start_move)
         self.dock.bind("<B1-Motion>", self.do_move)
-        self.main_container.bind("<Button-1>", self.start_move)
-        self.main_container.bind("<B1-Motion>", self.do_move)
+        self.glass_shell.bind("<Button-1>", self.start_move)
+        self.glass_shell.bind("<B1-Motion>", self.do_move)
 
-        # ── PR Input Section (Hidden initially) ──
-        self.pr_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
-        self.pr_frame.grid_columnconfigure(0, weight=2)
-        self.pr_frame.grid_columnconfigure(1, weight=0)
-        self.pr_frame.grid_columnconfigure(2, weight=3)
-        self.pr_frame.grid_columnconfigure(3, weight=1)
-        self.pr_frame.grid_columnconfigure(4, weight=0)
-        self.pr_frame.grid_columnconfigure(5, weight=0)
+        # ══════════════════════════════════════════════
+        # ── PR Input Panel (Liquid Glass Expandable) ──
+        # ══════════════════════════════════════════════
+        self.pr_frame = ctk.CTkFrame(
+            self.glass_shell, fg_color="transparent"
+        )
+        self.pr_frame.grid_columnconfigure(0, weight=2)   # Description
+        self.pr_frame.grid_columnconfigure(1, weight=0)   # Checkbox
+        self.pr_frame.grid_columnconfigure(2, weight=3)   # Account
+        self.pr_frame.grid_columnconfigure(3, weight=1)   # Part No
+        self.pr_frame.grid_columnconfigure(4, weight=0)   # Run
+        self.pr_frame.grid_columnconfigure(5, weight=0)   # Close
         self.pr_frame.grid_rowconfigure(0, weight=1)
 
-        # ── Input Fields (Apple-style) ──
-        entry_cfg = dict(
-            corner_radius=10,
+        # ── Glass Input Fields ──
+        glass_entry = dict(
+            corner_radius=12,
             border_width=1,
-            border_color=COLORS["separator"],
-            fg_color=COLORS["bg_secondary"],
-            text_color=COLORS["text_primary"],
-            font=("SF Pro Display", 13),
+            border_color=GLASS["border_glass"],
+            fg_color=GLASS["glass_elevated"],
+            text_color=GLASS["text_bright"],
+            font=("SF Pro Text", 13),
             height=34,
         )
 
+        # Description
         self.desc_entry = ctk.CTkEntry(
             self.pr_frame, placeholder_text="PR Description",
-            placeholder_text_color=COLORS["text_secondary"],
-            width=160, **entry_cfg
+            placeholder_text_color=GLASS["text_dim"],
+            width=150, **glass_entry
         )
-        self.desc_entry.grid(row=0, column=0, padx=(6, 3), pady=10, sticky="ew")
+        self.desc_entry.grid(row=0, column=0, padx=(6, 3), pady=12, sticky="ew")
 
-        # Checkbox (modern toggle style)
+        # 단가 Checkbox (Glass toggle)
         self.unit_price_var = ctk.BooleanVar(value=False)
         self.unit_price_chk = ctk.CTkCheckBox(
             self.pr_frame, text="단가",
-            variable=self.unit_price_var, width=50,
-            font=("SF Pro Display", 12),
-            text_color=COLORS["text_secondary"],
-            fg_color=COLORS["accent_blue"],
-            hover_color=COLORS["bg_tertiary"],
-            border_color=COLORS["separator"],
+            variable=self.unit_price_var, width=48,
+            font=("SF Pro Text", 11),
+            text_color=GLASS["text_mid"],
+            fg_color=GLASS["liquid_cyan"],
+            hover_color=GLASS["glass_hover"],
+            border_color=GLASS["border_glass"],
             corner_radius=6,
-            checkbox_height=18, checkbox_width=18,
+            checkbox_height=16, checkbox_width=16,
         )
-        self.unit_price_chk.grid(row=0, column=1, padx=3, pady=10)
+        self.unit_price_chk.grid(row=0, column=1, padx=2, pady=12)
 
-        # Account Code Combo
+        # Account Code (Glass Dropdown)
         self.account_codes = [
             "0501030000/수선유지비", "0501030100/수선유지비", "0501030101/장비 자재비-QC",
             "0501030102/장비 자재비-ATC", "0501030103/장비 자재비-RS", "0501030104/장비 자재비-YT",
@@ -208,54 +236,54 @@ class PRMakerWidget(ctk.CTk):
             "0501030132/수선유지비-외주수리-ECH", "0501040106/동력비-윤활유"
         ]
         self.account_combo = ctk.CTkComboBox(
-            self.pr_frame, values=self.account_codes, width=160,
-            corner_radius=10,
+            self.pr_frame, values=self.account_codes, width=150,
+            corner_radius=12,
             border_width=1,
-            border_color=COLORS["separator"],
-            fg_color=COLORS["bg_secondary"],
-            button_color=COLORS["bg_tertiary"],
-            button_hover_color=COLORS["hover"],
-            text_color=COLORS["text_primary"],
-            font=("SF Pro Display", 12),
-            dropdown_fg_color=COLORS["bg_secondary"],
-            dropdown_text_color=COLORS["text_primary"],
-            dropdown_hover_color=COLORS["accent_blue"],
+            border_color=GLASS["border_glass"],
+            fg_color=GLASS["glass_elevated"],
+            button_color=GLASS["glass_hover"],
+            button_hover_color=GLASS["glass_pressed"],
+            text_color=GLASS["text_bright"],
+            font=("SF Pro Text", 11),
+            dropdown_fg_color=GLASS["glass_surface"],
+            dropdown_text_color=GLASS["text_bright"],
+            dropdown_hover_color=GLASS["liquid_blue"],
             height=34,
         )
-        self.account_combo.grid(row=0, column=2, padx=3, pady=10, sticky="ew")
+        self.account_combo.grid(row=0, column=2, padx=3, pady=12, sticky="ew")
         self.account_combo.set("0501030100/수선유지비")
 
-        # Part No Input
+        # Part No (Glass Input)
         self.part_entry = ctk.CTkEntry(
             self.pr_frame, placeholder_text="Part No",
-            placeholder_text_color=COLORS["text_secondary"],
-            width=80, **entry_cfg
+            placeholder_text_color=GLASS["text_dim"],
+            width=75, **glass_entry
         )
-        self.part_entry.grid(row=0, column=3, padx=3, pady=10, sticky="ew")
+        self.part_entry.grid(row=0, column=3, padx=3, pady=12, sticky="ew")
 
-        # Run Button (Apple-green pill)
+        # ── Run Button (Liquid Green Glow) ──
         self.run_btn = ctk.CTkButton(
             self.pr_frame, text="▶", width=36, height=34,
-            corner_radius=10,
-            fg_color=COLORS["accent_green"],
-            hover_color="#28B84C",
+            corner_radius=12,
+            fg_color=GLASS["liquid_green"],
+            hover_color=GLASS["liquid_green_dim"],
             text_color="white",
-            font=("SF Pro Display", 16),
+            font=("SF Pro Display", 15, "bold"),
             command=self.run_automation_thread
         )
-        self.run_btn.grid(row=0, column=4, padx=3, pady=10)
+        self.run_btn.grid(row=0, column=4, padx=3, pady=12)
 
-        # Close Section Button (subtle)
+        # ── Collapse Arrow (Glass) ──
         self.close_btn = ctk.CTkButton(
-            self.pr_frame, text="‹", width=24, height=34,
-            corner_radius=10,
+            self.pr_frame, text="‹", width=22, height=34,
+            corner_radius=11,
             fg_color="transparent",
-            hover_color=COLORS["hover"],
-            text_color=COLORS["text_secondary"],
-            font=("SF Pro Display", 18),
+            hover_color=GLASS["glass_hover"],
+            text_color=GLASS["text_dim"],
+            font=("SF Pro Display", 17),
             command=self.toggle_pr_section
         )
-        self.close_btn.grid(row=0, column=5, padx=(2, 6), pady=10)
+        self.close_btn.grid(row=0, column=5, padx=(1, 5), pady=12)
 
         # Bind Escape to Hide
         self.bind("<Escape>", lambda e: self.hide_widget())
@@ -264,6 +292,9 @@ class PRMakerWidget(ctk.CTk):
         self.is_running = False
         self.pr_visible = False
 
+    # ══════════════════════════════════════
+    # ── Panel Toggle (Smooth Expand) ──
+    # ══════════════════════════════════════
     def toggle_pr_section(self):
         if self.pr_visible:
             self.pr_frame.grid_forget()
@@ -271,130 +302,149 @@ class PRMakerWidget(ctk.CTk):
             self.btn_tools.configure(fg_color="transparent")
             self.pr_visible = False
         else:
-            self.pr_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 4))
+            self.pr_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 2))
             self.geometry(f"{WIDGET_WIDTH_FULL}x{WIDGET_HEIGHT}")
-            self.btn_tools.configure(fg_color=COLORS["accent_blue"])
+            self.btn_tools.configure(fg_color=GLASS["liquid_blue"])
             self.pr_visible = True
             self.desc_entry.focus_set()
 
-
+    # ══════════════════════════════════════
+    # ── Settings Dialog (Frosted Glass) ──
+    # ══════════════════════════════════════
     def show_settings_dialog(self):
-        """Apple-style floating settings dialog."""
         dialog = ctk.CTkToplevel(self)
         dialog.title("")
         dialog.overrideredirect(True)
         dialog.attributes('-topmost', True)
-        dialog.configure(fg_color=COLORS["bg"])
+        dialog.attributes('-alpha', 0.94)
+        dialog.configure(fg_color=GLASS["glass_bg"])
 
-        # Position above the widget
-        wx = self.winfo_x()
-        wy = self.winfo_y()
+        # Position above widget
+        wx, wy = self.winfo_x(), self.winfo_y()
         dw, dh = 280, 240
-        dialog.geometry(f"{dw}x{dh}+{wx}+{wy - dh - 8}")
+        dialog.geometry(f"{dw}x{dh}+{wx}+{wy - dh - 10}")
 
-        # Container with border
-        container = ctk.CTkFrame(dialog, corner_radius=14,
-                                 fg_color=COLORS["bg_secondary"],
-                                 border_width=1, border_color=COLORS["separator"])
-        container.pack(fill="both", expand=True, padx=2, pady=2)
+        # Glass container
+        glass = ctk.CTkFrame(
+            dialog, corner_radius=18,
+            fg_color=GLASS["glass_surface"],
+            border_width=1, border_color=GLASS["border_glass"]
+        )
+        glass.pack(fill="both", expand=True, padx=2, pady=2)
 
         # Title
-        title_label = ctk.CTkLabel(container, text="설정",
-                                   font=("SF Pro Display", 14, "bold"),
-                                   text_color=COLORS["text_primary"])
-        title_label.pack(pady=(12, 6))
+        ctk.CTkLabel(
+            glass, text="설정",
+            font=("SF Pro Display", 15, "bold"),
+            text_color=GLASS["text_bright"]
+        ).pack(pady=(14, 6))
 
         # ── Startup Toggle ──
-        startup_frame = ctk.CTkFrame(container, fg_color="transparent")
-        startup_frame.pack(fill="x", padx=16, pady=(0, 10))
-        
+        startup_frame = ctk.CTkFrame(glass, fg_color="transparent")
+        startup_frame.pack(fill="x", padx=18, pady=(0, 8))
+
         is_startup = self.is_in_startup()
         startup_var = ctk.BooleanVar(value=is_startup)
-        
+
         def on_startup_toggle():
             self.toggle_startup(startup_var.get())
 
-        ctk.CTkCheckBox(startup_frame, text="Windows 시작 시 자동 실행",
-                        variable=startup_var, command=on_startup_toggle,
-                        font=("SF Pro Display", 12),
-                        text_color=COLORS["text_primary"],
-                        fg_color=COLORS["accent_green"],
-                        hover_color=COLORS["bg_tertiary"],
-                        border_color=COLORS["separator"],
-                        corner_radius=6,
-                        checkbox_height=18, checkbox_width=18).pack(side="left")
+        ctk.CTkCheckBox(
+            startup_frame, text="Windows 시작 시 자동 실행",
+            variable=startup_var, command=on_startup_toggle,
+            font=("SF Pro Text", 12),
+            text_color=GLASS["text_bright"],
+            fg_color=GLASS["liquid_green"],
+            hover_color=GLASS["glass_hover"],
+            border_color=GLASS["border_glass"],
+            corner_radius=6,
+            checkbox_height=16, checkbox_width=16
+        ).pack(side="left")
 
-        # ── Separator ──
-        ctk.CTkFrame(container, height=1, fg_color=COLORS["separator"]).pack(fill="x", padx=16, pady=4)
+        # ── Divider ──
+        ctk.CTkFrame(glass, height=1, fg_color=GLASS["divider"]).pack(fill="x", padx=18, pady=4)
 
         # ── Password Section ──
-        ctk.CTkLabel(container, text="비밀번호 변경",
-                     font=("SF Pro Display", 12, "bold"),
-                     text_color=COLORS["text_secondary"]).pack(pady=(8, 4))
+        ctk.CTkLabel(
+            glass, text="비밀번호 변경",
+            font=("SF Pro Display", 12, "bold"),
+            text_color=GLASS["text_mid"]
+        ).pack(pady=(6, 4))
 
-        # Current password (read-only, masked)
+        pw_entry_cfg = dict(
+            height=30, corner_radius=10,
+            fg_color=GLASS["glass_elevated"],
+            border_width=1, border_color=GLASS["border_glass"],
+            font=("SF Pro Text", 12)
+        )
+
+        # Current password
         current_pw = menu_navigator.get_password()
-        cur_frame = ctk.CTkFrame(container, fg_color="transparent")
-        cur_frame.pack(fill="x", padx=16, pady=2)
+        cur_frame = ctk.CTkFrame(glass, fg_color="transparent")
+        cur_frame.pack(fill="x", padx=18, pady=2)
         ctk.CTkLabel(cur_frame, text="현재", width=36,
-                     font=("SF Pro Display", 11),
-                     text_color=COLORS["text_secondary"]).pack(side="left")
-        cur_entry = ctk.CTkEntry(cur_frame, height=30, corner_radius=8,
-                                 fg_color=COLORS["bg"], border_width=1,
-                                 border_color=COLORS["separator"],
-                                 text_color=COLORS["text_secondary"],
-                                 font=("SF Pro Display", 12))
+                     font=("SF Pro Text", 11),
+                     text_color=GLASS["text_dim"]).pack(side="left")
+        cur_entry = ctk.CTkEntry(cur_frame, text_color=GLASS["text_dim"], **pw_entry_cfg)
         cur_entry.pack(side="left", fill="x", expand=True, padx=(4, 0))
         cur_entry.insert(0, current_pw)
         cur_entry.configure(state="disabled")
 
-        # New password input
-        new_frame = ctk.CTkFrame(container, fg_color="transparent")
-        new_frame.pack(fill="x", padx=16, pady=2)
+        # New password
+        new_frame = ctk.CTkFrame(glass, fg_color="transparent")
+        new_frame.pack(fill="x", padx=18, pady=2)
         ctk.CTkLabel(new_frame, text="변경", width=36,
-                     font=("SF Pro Display", 11),
-                     text_color=COLORS["text_secondary"]).pack(side="left")
-        new_entry = ctk.CTkEntry(new_frame, height=30, corner_radius=8,
-                                 fg_color=COLORS["bg"], border_width=1,
-                                 border_color=COLORS["separator"],
-                                 text_color=COLORS["text_primary"],
-                                 placeholder_text="새 비밀번호",
-                                 placeholder_text_color=COLORS["text_secondary"],
-                                 font=("SF Pro Display", 12))
+                     font=("SF Pro Text", 11),
+                     text_color=GLASS["text_dim"]).pack(side="left")
+        new_entry = ctk.CTkEntry(
+            new_frame, text_color=GLASS["text_bright"],
+            placeholder_text="새 비밀번호",
+            placeholder_text_color=GLASS["text_dim"],
+            **pw_entry_cfg
+        )
         new_entry.pack(side="left", fill="x", expand=True, padx=(4, 0))
-        # new_entry.focus_set() # Don't auto-focus, let user click if they want to change pw
 
         # Buttons
-        btn_frame = ctk.CTkFrame(container, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=16, pady=(12, 12))
+        btn_frame = ctk.CTkFrame(glass, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=18, pady=(10, 12))
 
         def do_save():
             new_pw = new_entry.get().strip()
             if new_pw:
                 menu_navigator.save_password(new_pw)
-                print(f"Password updated successfully.")
+                print("Password updated successfully.")
             dialog.destroy()
 
-        ctk.CTkButton(btn_frame, text="닫기", width=60, height=28,
-                      corner_radius=8, fg_color=COLORS["bg_tertiary"],
-                      hover_color=COLORS["hover"],
-                      text_color=COLORS["text_primary"],
-                      font=("SF Pro Display", 12),
-                      command=dialog.destroy).pack(side="right", padx=(4, 0))
+        ctk.CTkButton(
+            btn_frame, text="닫기", width=58, height=28,
+            corner_radius=10, fg_color=GLASS["glass_elevated"],
+            hover_color=GLASS["glass_hover"],
+            text_color=GLASS["text_bright"],
+            font=("SF Pro Text", 12),
+            command=dialog.destroy
+        ).pack(side="right", padx=(4, 0))
 
-        ctk.CTkButton(btn_frame, text="저장", width=60, height=28,
-                      corner_radius=8, fg_color=COLORS["accent_blue"],
-                      hover_color="#0070E0",
-                      text_color="white",
-                      font=("SF Pro Display", 12, "bold"),
-                      command=do_save).pack(side="right")
+        ctk.CTkButton(
+            btn_frame, text="저장", width=58, height=28,
+            corner_radius=10, fg_color=GLASS["liquid_blue"],
+            hover_color="#0060CC",
+            text_color="white",
+            font=("SF Pro Text", 12, "bold"),
+            command=do_save
+        ).pack(side="right")
 
-        # Close on Escape
         dialog.bind("<Escape>", lambda e: dialog.destroy())
         new_entry.bind("<Return>", lambda e: do_save())
 
+    # ══════════════════════════
+    # ── Startup Management ──
+    # ══════════════════════════
     def get_startup_path(self):
-        return os.path.join(os.getenv('APPDATA'), r'Microsoft\Windows\Start Menu\Programs\Startup', 'PRMakerWidget.lnk')
+        return os.path.join(
+            os.getenv('APPDATA'),
+            r'Microsoft\Windows\Start Menu\Programs\Startup',
+            'PRMakerWidget.lnk'
+        )
 
     def is_in_startup(self):
         return os.path.exists(self.get_startup_path())
@@ -406,18 +456,14 @@ class PRMakerWidget(ctk.CTk):
                 import win32com.client
                 shell = win32com.client.Dispatch("WScript.Shell")
                 shortcut = shell.CreateShortCut(shortcut_path)
-                shortcut.Targetpath = sys.executable if getattr(sys, 'frozen', False) else sys.executable
                 if getattr(sys, 'frozen', False):
-                     shortcut.Targetpath = sys.executable
+                    shortcut.Targetpath = sys.executable
                 else:
-                     # Running as script: pythonw.exe PRMakerWidget.py
-                     # But better to point to a bat file or just the python executable with arguments
-                     shortcut.Arguments = f'"{os.path.abspath(__file__)}"'
-                
+                    shortcut.Targetpath = sys.executable
+                    shortcut.Arguments = f'"{os.path.abspath(__file__)}"'
                 shortcut.WorkingDirectory = os.path.dirname(os.path.abspath(__file__))
-                shortcut.IconLocation = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'taskbar_icon.png')
                 shortcut.save()
-                print(f"Startup shortcut created at {shortcut_path}")
+                print(f"Startup shortcut created.")
             except Exception as e:
                 print(f"Failed to create startup shortcut: {e}")
         else:
@@ -426,14 +472,16 @@ class PRMakerWidget(ctk.CTk):
                     os.remove(shortcut_path)
                     print("Startup shortcut removed.")
                 except Exception as e:
-                    print(f"Failed to remove startup shortcut: {e}")
+                    print(f"Failed to remove: {e}")
 
-
+    # ══════════════════════════
+    # ── Window Management ──
+    # ══════════════════════════
     def center_window(self):
-        screen_width = self.winfo_screenwidth()
-        screen_height = self.winfo_screenheight()
-        x = (screen_width - WIDGET_WIDTH_MINI) // 2
-        y = screen_height - WIDGET_HEIGHT - 80  # Near bottom, like macOS dock
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x = (sw - WIDGET_WIDTH_MINI) // 2
+        y = sh - WIDGET_HEIGHT - 80
         self.geometry(f"+{x}+{y}")
 
     def bring_to_front(self):
@@ -448,28 +496,19 @@ class PRMakerWidget(ctk.CTk):
         self._drag_y = event.y
 
     def do_move(self, event):
-        deltax = event.x - self._drag_x
-        deltay = event.y - self._drag_y
-        x = self.winfo_x() + deltax
-        y = self.winfo_y() + deltay
-        self.geometry(f"+{x}+{y}")
+        dx = event.x - self._drag_x
+        dy = event.y - self._drag_y
+        self.geometry(f"+{self.winfo_x() + dx}+{self.winfo_y() + dy}")
 
     def show_at_cursor(self):
         try:
-            mouse_x, mouse_y = pyautogui.position()
-            screen_w = self.winfo_screenwidth()
-            screen_h = self.winfo_screenheight()
-
+            mx, my = pyautogui.position()
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
             w = WIDGET_WIDTH_FULL if self.pr_visible else WIDGET_WIDTH_MINI
-            final_x = mouse_x
-            final_y = mouse_y + 20
-
-            if final_x + w > screen_w:
-                final_x = screen_w - w - 10
-            if final_y + WIDGET_HEIGHT > screen_h:
-                final_y = mouse_y - WIDGET_HEIGHT - 10
-
-            self.geometry(f"+{final_x}+{final_y}")
+            fx = min(mx, sw - w - 10)
+            fy = my + 20 if my + WIDGET_HEIGHT + 20 < sh else my - WIDGET_HEIGHT - 10
+            self.geometry(f"+{fx}+{fy}")
             self.bring_to_front()
             if self.pr_visible:
                 self.desc_entry.focus_set()
@@ -480,20 +519,26 @@ class PRMakerWidget(ctk.CTk):
     def hide_widget(self):
         self.withdraw()
 
+    # ══════════════════════════
+    # ── Automation Runner ──
+    # ══════════════════════════
     def run_automation_thread(self):
         if self.is_running:
             return
         desc = self.desc_entry.get()
         if not desc:
-            # Flash the entry border red briefly
-            self.desc_entry.configure(border_color=COLORS["accent_red"])
-            self.after(1500, lambda: self.desc_entry.configure(border_color=COLORS["separator"]))
+            # Flash border red
+            self.desc_entry.configure(border_color=GLASS["liquid_red"])
+            self.after(1500, lambda: self.desc_entry.configure(border_color=GLASS["border_glass"]))
             return
         account = self.account_combo.get()
         part_no = self.part_entry.get()
-        self.run_btn.configure(state="disabled", fg_color=COLORS["bg_tertiary"])
+        self.run_btn.configure(state="disabled", fg_color=GLASS["glass_hover"])
         self.is_running = True
-        threading.Thread(target=self._run_automation, args=(desc, account, part_no), daemon=True).start()
+        threading.Thread(
+            target=self._run_automation,
+            args=(desc, account, part_no), daemon=True
+        ).start()
 
     def _run_automation(self, desc, account, part_no):
         try:
@@ -503,9 +548,12 @@ class PRMakerWidget(ctk.CTk):
             print(f"Automation Error: {e}")
         finally:
             self.is_running = False
-            self.run_btn.configure(state="normal", fg_color=COLORS["accent_green"])
+            self.run_btn.configure(state="normal", fg_color=GLASS["liquid_green"])
 
 
+# ══════════════════════════════
+# ── Entry Point ──
+# ══════════════════════════════
 app = None
 
 def on_activate():
@@ -522,10 +570,10 @@ if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
     app = PRMakerWidget()
     print("=" * 50)
-    print(" PR Maker Widget — Apple Style")
+    print(" PR Maker Widget — Liquid Glass Edition")
     print("=" * 50)
     if PYNPUT_AVAILABLE:
-        print(" [Ctrl + Shift + P] to show widget at mouse cursor")
+        print(" [Ctrl + Shift + P] to show widget at cursor")
         threading.Thread(target=start_hotkey_listener, daemon=True).start()
     else:
         print(" [!] pynput not installed. Global hotkey disabled.")
