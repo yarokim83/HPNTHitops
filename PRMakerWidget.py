@@ -7,6 +7,8 @@ import time
 import main
 import menu_navigator
 import ocr_helpers
+import pystray
+from PIL import Image
 
 # Check for pynput
 try:
@@ -17,7 +19,7 @@ except ImportError:
     print("Warning: 'pynput' library not found. Global hotkey will not work.")
 
 # ── Liquid Glass Widget Configuration ──
-WIDGET_WIDTH_FULL = 840
+WIDGET_WIDTH_FULL = 880
 WIDGET_WIDTH_MINI = 300
 WIDGET_HEIGHT = 68
 ALPHA_VALUE = 0.88
@@ -158,7 +160,7 @@ class PRMakerWidget(ctk.CTk):
             corner_radius=14, font=("SF Pro Display", 12),
             fg_color="transparent", hover_color=GLASS["liquid_red"],
             text_color=GLASS["text_dim"],
-            command=self.destroy
+            command=self.hide_widget
         )
         self.btn_exit.pack(side="left", padx=(1, 3), pady=4)
 
@@ -178,8 +180,9 @@ class PRMakerWidget(ctk.CTk):
         self.pr_frame.grid_columnconfigure(1, weight=0)   # Checkbox
         self.pr_frame.grid_columnconfigure(2, weight=3)   # Account
         self.pr_frame.grid_columnconfigure(3, weight=1)   # Part No
-        self.pr_frame.grid_columnconfigure(4, weight=0)   # Run
-        self.pr_frame.grid_columnconfigure(5, weight=0)   # Close
+        self.pr_frame.grid_columnconfigure(4, weight=0)   # Clear
+        self.pr_frame.grid_columnconfigure(5, weight=0)   # Run
+        self.pr_frame.grid_columnconfigure(6, weight=0)   # Close
         self.pr_frame.grid_rowconfigure(0, weight=1)
 
         # ── Glass Input Fields ──
@@ -261,6 +264,18 @@ class PRMakerWidget(ctk.CTk):
         )
         self.part_entry.grid(row=0, column=3, padx=3, pady=12, sticky="ew")
 
+        # ── Clear Button (Liquid Orange) ──
+        self.clear_btn = ctk.CTkButton(
+            self.pr_frame, text="⟲", width=36, height=34,
+            corner_radius=12,
+            fg_color=GLASS["glass_elevated"],
+            hover_color=GLASS["liquid_orange"],
+            text_color=GLASS["text_bright"],
+            font=("SF Pro Display", 16, "bold"),
+            command=self.clear_inputs
+        )
+        self.clear_btn.grid(row=0, column=4, padx=3, pady=12)
+
         # ── Run Button (Liquid Green Glow) ──
         self.run_btn = ctk.CTkButton(
             self.pr_frame, text="▶", width=36, height=34,
@@ -271,7 +286,7 @@ class PRMakerWidget(ctk.CTk):
             font=("SF Pro Display", 15, "bold"),
             command=self.run_automation_thread
         )
-        self.run_btn.grid(row=0, column=4, padx=3, pady=12)
+        self.run_btn.grid(row=0, column=5, padx=3, pady=12)
 
         # ── Collapse Arrow (Glass) ──
         self.close_btn = ctk.CTkButton(
@@ -283,7 +298,7 @@ class PRMakerWidget(ctk.CTk):
             font=("SF Pro Display", 17),
             command=self.toggle_pr_section
         )
-        self.close_btn.grid(row=0, column=5, padx=(1, 5), pady=12)
+        self.close_btn.grid(row=0, column=6, padx=(1, 5), pady=12)
 
         # Bind Escape to Hide
         self.bind("<Escape>", lambda e: self.hide_widget())
@@ -291,6 +306,12 @@ class PRMakerWidget(ctk.CTk):
         # Internal State
         self.is_running = False
         self.pr_visible = False
+
+    def clear_inputs(self):
+        """Clears the PR Description and Part No fields."""
+        self.desc_entry.delete(0, 'end')
+        self.part_entry.delete(0, 'end')
+        self.desc_entry.focus_set()
 
     # ══════════════════════════════════════
     # ── Panel Toggle (Smooth Expand) ──
@@ -560,6 +581,30 @@ def on_activate():
     if app:
         app.after(0, app.show_at_cursor)
 
+def setup_tray_icon(app_instance):
+    try:
+        icon_path = os.path.join(app_instance.assets_dir, "taskbar_icon.png")
+        if not os.path.exists(icon_path):
+            return
+        image = Image.open(icon_path)
+        
+        def on_show(icon, item):
+            app_instance.after(0, app_instance.show_at_cursor)
+            
+        def on_exit(icon, item):
+            icon.stop()
+            app_instance.after(0, app_instance.destroy)
+            
+        menu = pystray.Menu(
+            pystray.MenuItem("Show PR Maker", on_show, default=True),
+            pystray.MenuItem("Exit", on_exit)
+        )
+        
+        icon = pystray.Icon("PRMaker", image, "PR Maker Widget", menu)
+        icon.run()
+    except Exception as e:
+        print(f"Tray icon error: {e}")
+
 def start_hotkey_listener():
     if not PYNPUT_AVAILABLE:
         return
@@ -577,4 +622,11 @@ if __name__ == "__main__":
         threading.Thread(target=start_hotkey_listener, daemon=True).start()
     else:
         print(" [!] pynput not installed. Global hotkey disabled.")
+        
+    # Start in background (hidden)
+    app.withdraw()
+    
+    # Start System Tray Icon
+    threading.Thread(target=setup_tray_icon, args=(app,), daemon=True).start()
+    
     app.mainloop()
