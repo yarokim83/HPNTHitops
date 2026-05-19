@@ -7,6 +7,7 @@ import time
 import main
 import menu_navigator
 import ocr_helpers
+from account_codes import ACCOUNT_CODES
 import pystray
 from PIL import Image
 
@@ -121,21 +122,60 @@ class PRMakerWidget(ctk.CTk):
         )
         self.btn_tools.pack(side="left", padx=3, pady=4)
 
+        # Shared idle/running styles for dock image buttons.
+        # When idle, the button background is transparent. When a task is
+        # running, the background is dimmed to `glass_pressed` for feedback.
+        self._dock_idle_style = {"fg_color": "transparent"}
+        self._dock_running_style = {"fg_color": GLASS["glass_pressed"]}
+
         self.btn_mc = ctk.CTkButton(
             self.dock, image=self.img_mc,
-            command=lambda: threading.Thread(
-                target=menu_navigator.run_mc_sequence, daemon=True).start(),
+            command=lambda: self._run_task(
+                menu_navigator.run_mc_sequence,
+                self.btn_mc,
+                self._dock_idle_style,
+                self._dock_running_style,
+                task_name="M&C",
+            ),
             **glass_btn
         )
         self.btn_mc.pack(side="left", padx=2, pady=4)
 
         self.btn_rcc = ctk.CTkButton(
             self.dock, image=self.img_rcc,
-            command=lambda: threading.Thread(
-                target=menu_navigator.click_rcc_menu, daemon=True).start(),
+            command=lambda: self._run_task(
+                menu_navigator.click_rcc_menu,
+                self.btn_rcc,
+                self._dock_idle_style,
+                self._dock_running_style,
+                task_name="RCC",
+            ),
             **glass_btn
         )
         self.btn_rcc.pack(side="left", padx=2, pady=4)
+
+        # ── Login-only Button (Launch + Login + Maximize) ──
+        # Uses a power-symbol glyph instead of an image asset to keep the
+        # widget self-contained (no extra PNG required).
+        login_btn_style = dict(glass_btn)
+        login_btn_style.pop("text", None)
+        self._login_idle_style = {"text_color": GLASS["liquid_cyan"]}
+        self._login_running_style = {"text_color": GLASS["text_dim"]}
+        self.btn_login = ctk.CTkButton(
+            self.dock,
+            text="⏻",
+            font=("SF Pro Display", 20, "bold"),
+            text_color=GLASS["liquid_cyan"],
+            command=lambda: self._run_task(
+                menu_navigator.ensure_app_ready,
+                self.btn_login,
+                self._login_idle_style,
+                self._login_running_style,
+                task_name="Login",
+            ),
+            **login_btn_style,
+        )
+        self.btn_login.pack(side="left", padx=2, pady=4)
 
         # ── Glass Divider ──
         self.divider = ctk.CTkFrame(
@@ -219,25 +259,8 @@ class PRMakerWidget(ctk.CTk):
         )
         self.unit_price_chk.grid(row=0, column=1, padx=2, pady=12)
 
-        # Account Code (Glass Dropdown)
-        self.account_codes = [
-            "0501030000/수선유지비", "0501030100/수선유지비", "0501030101/장비 자재비-QC",
-            "0501030102/장비 자재비-ATC", "0501030103/장비 자재비-RS", "0501030104/장비 자재비-YT",
-            "0501030105/장비 자재비-YC", "0501030106/장비 자재비-FL", "0501030107/장비 자재비-기타",
-            "0501030108/수선유지비-외주수리-QC", "0501030109/수선유지비-외주수리-ATC",
-            "0501030110/수선유지비-외주수리-RS", "0501030111/수선유지비-외주수리-YT",
-            "0501030112/수선유지비-외주수리-YC", "0501030113/수선유지비-외주수리-FL",
-            "0501030114/수선유지비-외주수리-기타", "0501030115/시설물-야드시설물(자재)",
-            "0501030116/수선유지비-시설물-CFS시설물", "0501030117/시설물-전기시설물(자재)",
-            "0501030118/시설물-외주수리", "0501030119/수선유지비_작업공구-야드공구",
-            "0501030120/수선유지비_작업공구-정비공구", "0501030121/수선유지비_작업공구-CFS공구",
-            "0501030122/수선유지비_작업공구-안전공구", "0501030123/수선유지비_작업공구-기타공구",
-            "0501030124/수선유지비_작업소모품-야드소모품", "0501030125/작업소모품-정비소모품/공구",
-            "0501030126/수선유지비_작업소모품-CFS소모품", "0501030127/수선유지비_작업소모품-안전소모품",
-            "0501030128/수선유지비_작업소모품-기타소모품", "0501030129/수선유지비-CNTR",
-            "0501030130/수선유지비-기타 (사고변상금등)", "0501030131/장비자재비-ECH",
-            "0501030132/수선유지비-외주수리-ECH", "0501040106/동력비-윤활유"
-        ]
+        # Account Code (Glass Dropdown) — single source of truth
+        self.account_codes = ACCOUNT_CODES
         self.account_combo = ctk.CTkComboBox(
             self.pr_frame, values=self.account_codes, width=150,
             corner_radius=12,
@@ -478,11 +501,15 @@ class PRMakerWidget(ctk.CTk):
                 shell = win32com.client.Dispatch("WScript.Shell")
                 shortcut = shell.CreateShortCut(shortcut_path)
                 if getattr(sys, 'frozen', False):
+                    # When running as a PyInstaller --onefile EXE, sys.executable
+                    # is the actual EXE on disk; __file__ points to a temporary
+                    # _MEIxxxx folder which is removed on exit.
                     shortcut.Targetpath = sys.executable
+                    shortcut.WorkingDirectory = os.path.dirname(sys.executable)
                 else:
                     shortcut.Targetpath = sys.executable
                     shortcut.Arguments = f'"{os.path.abspath(__file__)}"'
-                shortcut.WorkingDirectory = os.path.dirname(os.path.abspath(__file__))
+                    shortcut.WorkingDirectory = os.path.dirname(os.path.abspath(__file__))
                 shortcut.save()
                 print(f"Startup shortcut created.")
             except Exception as e:
@@ -533,43 +560,87 @@ class PRMakerWidget(ctk.CTk):
             self.bring_to_front()
             if self.pr_visible:
                 self.desc_entry.focus_set()
-        except:
+        except Exception:
             self.center_window()
             self.bring_to_front()
 
     def hide_widget(self):
         self.withdraw()
 
-    # ══════════════════════════
-    # ── Automation Runner ──
-    # ══════════════════════════
+    # ══════════════════════════════════════
+    # ── Generic Task Runner ──
+    # ══════════════════════════════════════
+    def _run_task(self, task_fn, button, idle_style, running_style, task_name="task"):
+        """
+        Run a long-running automation callable in a background daemon thread
+        with a single concurrency guard (`self.is_running`) and consistent
+        visual feedback on the triggering button.
+
+        Args:
+            task_fn: Zero-argument callable to execute on the background thread.
+            button: The CTk button to disable/dim while running.
+            idle_style: Dict of CTkButton.configure kwargs for the idle state.
+            running_style: Dict of CTkButton.configure kwargs for the running state.
+            task_name: Short label used in log lines.
+        """
+        if self.is_running:
+            print(f"[{task_name}] Ignored: another task is already running.")
+            return
+        self.is_running = True
+        self._apply_button_style(button, state="disabled", style=running_style)
+
+        def worker():
+            try:
+                print(f"[{task_name}] Started.")
+                result = task_fn()
+                if result is False:
+                    print(f"[{task_name}] Failed.")
+                else:
+                    print(f"[{task_name}] Done.")
+            except Exception as e:
+                print(f"[{task_name}] Error: {e}")
+            finally:
+                self.is_running = False
+                self.after(0, lambda: self._apply_button_style(
+                    button, state="normal", style=idle_style
+                ))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_button_style(self, button, state, style):
+        """Safely apply a state + style dict to a CTk button."""
+        try:
+            button.configure(state=state, **style)
+        except Exception as e:
+            print(f"Button style update failed: {e}")
+
+    # ══════════════════════════════════════
+    # ── PR Automation Runner (uses _run_task) ──
+    # ══════════════════════════════════════
     def run_automation_thread(self):
         if self.is_running:
             return
         desc = self.desc_entry.get()
         if not desc:
-            # Flash border red
+            # Validation-only feedback (no task scheduled).
             self.desc_entry.configure(border_color=GLASS["liquid_red"])
             self.after(1500, lambda: self.desc_entry.configure(border_color=GLASS["border_glass"]))
             return
         account = self.account_combo.get()
         part_no = self.part_entry.get()
-        self.run_btn.configure(state="disabled", fg_color=GLASS["glass_hover"])
-        self.is_running = True
-        threading.Thread(
-            target=self._run_automation,
-            args=(desc, account, part_no), daemon=True
-        ).start()
+        is_unit_price = self.unit_price_var.get()
 
-    def _run_automation(self, desc, account, part_no):
-        try:
-            is_unit_price = self.unit_price_var.get()
+        # Bind args via closure so the shared runner stays argument-free.
+        def task():
             main.run_automation(desc, is_unit_price, account, part_no)
-        except Exception as e:
-            print(f"Automation Error: {e}")
-        finally:
-            self.is_running = False
-            self.run_btn.configure(state="normal", fg_color=GLASS["liquid_green"])
+
+        self._run_task(
+            task,
+            self.run_btn,
+            idle_style={"fg_color": GLASS["liquid_green"]},
+            running_style={"fg_color": GLASS["glass_hover"]},
+            task_name="PR",
+        )
 
 
 # ══════════════════════════════
@@ -615,7 +686,7 @@ if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
     app = PRMakerWidget()
     print("=" * 50)
-    print(" PR Maker Widget — Liquid Glass Edition")
+    print(" PR Maker Widget - Liquid Glass Edition")
     print("=" * 50)
     if PYNPUT_AVAILABLE:
         print(" [Ctrl + Shift + P] to show widget at cursor")

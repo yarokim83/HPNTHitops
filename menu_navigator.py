@@ -1,21 +1,24 @@
 import pyautogui
 import time
-
-# Global configuration
-pyautogui.FAILSAFE = False
 import os
 import sys
+import subprocess
+import threading
+import ctypes
 from PIL import ImageGrab
 import win32api
 import win32con
 import win32gui
 import win32process
-import subprocess
-import threading
-import ctypes
 import roi_helpers
 import ocr_helpers
 import login_manager # Import Login Manager
+from account_codes import ACCOUNT_CODE_PREFIXES, find_index_by_prefix
+
+# Global configuration
+# NOTE: Keep PyAutoGUI fail-safe ENABLED so the user can abort a runaway
+# automation by moving the mouse to the top-left screen corner.
+pyautogui.FAILSAFE = True
 
 def draw_crosshair(img, x, y, color="red", label="Target"):
     """Draws a crosshair on an image for visual ROI verification."""
@@ -87,16 +90,18 @@ def force_activate_window(hwnd):
         target_thread_id = win32process.GetWindowThreadProcessId(hwnd)[0]
         
         # Step 3: Attach to foreground thread, activate, then detach
+        attached = False
         if foreground_thread_id != target_thread_id:
             ctypes.windll.user32.AttachThreadInput(foreground_thread_id, target_thread_id, True)
-        
-        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-        win32gui.BringWindowToTop(hwnd)
-        win32gui.SetForegroundWindow(hwnd)
-        
-        if foreground_thread_id != target_thread_id:
-            ctypes.windll.user32.AttachThreadInput(foreground_thread_id, target_thread_id, False)
-        
+            attached = True
+        try:
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+            win32gui.BringWindowToTop(hwnd)
+            win32gui.SetForegroundWindow(hwnd)
+        finally:
+            if attached:
+                ctypes.windll.user32.AttachThreadInput(foreground_thread_id, target_thread_id, False)
+
         time.sleep(0.3)
         
         # Verify activation
@@ -120,30 +125,48 @@ def force_activate_window(hwnd):
 # Shared Functions (Used by both Purchase and M&C flows)
 # ============================================================
 
+def _get_config_path():
+    """Returns a stable config.json path under AppData\\Local\\PRMaker.
+    This avoids path inconsistency when running as a PyInstaller EXE,
+    where __file__ points to a temporary _MEIPASS folder that is deleted on exit."""
+    app_data = os.getenv('LOCALAPPDATA', os.path.expanduser('~'))
+    config_dir = os.path.join(app_data, 'PRMaker')
+    os.makedirs(config_dir, exist_ok=True)
+    return os.path.join(config_dir, 'config.json')
+
 def get_password():
-    """Read password from config.json, or return default."""
+    """Read password from config.json (AppData), or return default."""
     import json
-    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+    config_path = _get_config_path()
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
             return config.get('password', 'fdjk213!@')
-    except:
+    except FileNotFoundError:
+        return 'fdjk213!@'
+    except (OSError, ValueError) as e:
+        print(f"[Config] Failed to read password ({config_path}): {e}")
         return 'fdjk213!@'
 
 def save_password(new_password):
-    """Save password to config.json."""
+    """Save password to config.json (AppData)."""
     import json
-    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+    config_path = _get_config_path()
     config = {}
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
-    except:
+    except FileNotFoundError:
         pass
+    except (OSError, ValueError) as e:
+        print(f"[Config] Existing config unreadable, overwriting ({config_path}): {e}")
     config['password'] = new_password
-    with open(config_path, 'w', encoding='utf-8') as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        print(f"[Config] Password saved to: {config_path}")
+    except OSError as e:
+        print(f"[Config] FAILED to save password ({config_path}): {e}")
 
 def ensure_app_ready():
     """
@@ -197,14 +220,14 @@ def run_mc_sequence():
             # Maximize and bring to front
             win32gui.ShowWindow(mc_hwnd, win32con.SW_MAXIMIZE)
             win32gui.SetForegroundWindow(mc_hwnd)
-            time.sleep(1.0)
+            time.sleep(0.2)
             
             # Click center of M&C window to ensure true input focus
             rect = win32gui.GetWindowRect(mc_hwnd)
             cx = (rect[0] + rect[2]) // 2
             cy = (rect[1] + rect[3]) // 2
             pyautogui.click(cx, cy)
-            time.sleep(1.0)
+            time.sleep(0.2)
             print(f"M&C window maximized and focused (clicked center at {cx}, {cy}).")
         except Exception as e:
             print(f"Warning: Could not activate M&C window: {e}")
@@ -254,7 +277,7 @@ def run_mc_sequence():
         if loc_monitoring:
             print(f"Hovering over Monitoring at {loc_monitoring}...")
             pyautogui.moveTo(loc_monitoring)
-            time.sleep(1.0) # Wait for submenu
+            time.sleep(0.3) # Wait for submenu
             
             # Step 3: Click M&C
             loc_mc = locate_on_all_screens(mc_item_img, confidence_val=0.7)
@@ -269,12 +292,12 @@ def run_mc_sequence():
                 print(f"Clicking M&C Menu Item at {loc_mc}...")
                 pyautogui.click(loc_mc)
                 print("M&C clicked. Waiting for window...")
-                time.sleep(2.0)
+                time.sleep(0.5)
                 
                 # Dismiss any popup that may appear after M&C click
                 print("Dismissing any popup (pressing Enter)...")
                 pyautogui.press('enter')
-                time.sleep(1.0)
+                time.sleep(0.2)
                 
                 # Wait for M&C window to actually appear
                 mc_check = None
@@ -298,40 +321,44 @@ def run_mc_sequence():
     
     # Step 4: Activate M&C window and open Vessel menu
     _, mc_hwnd_now = roi_helpers.get_mc_window_rect()
-    if not mc_hwnd_now:
-        print("M&C window not found. Cannot proceed to Vessel menu.")
-        return False
-    
-    try:
-        # Force-activate M&C window using AttachThreadInput trick
-        win32gui.ShowWindow(mc_hwnd_now, win32con.SW_MAXIMIZE)
-        time.sleep(0.3)
-        force_activate_window(mc_hwnd_now)
-        time.sleep(0.5)
-        
-        # Click menu bar area to ensure keyboard focus for Alt+V
-        rect = win32gui.GetWindowRect(mc_hwnd_now)
-        menu_x = rect[0] + 100
-        menu_y = rect[1] + 30
-        pyautogui.click(menu_x, menu_y)
-        time.sleep(0.5)
-        print(f"M&C window activated and menu bar clicked ({menu_x}, {menu_y})")
-    except Exception as e:
-        print(f"Warning: Could not activate M&C window: {e}")
+    if mc_hwnd_now:
+        try:
+            win32gui.ShowWindow(mc_hwnd_now, win32con.SW_MAXIMIZE)
+            time.sleep(0.2)
+            force_activate_window(mc_hwnd_now)
+            time.sleep(0.3)
+            print(f"M&C window (HWND: {mc_hwnd_now}) activated and brought to front.")
+        except Exception as e:
+            print(f"Warning: Could not activate M&C window: {e}")
+    else:
+        print("Warning: M&C window not found before Alt+V. Proceeding anyway...")
     
     print("Step 4: Opening Vessel menu (Alt+V)...")
     pyautogui.hotkey('alt', 'v')
-    time.sleep(2.0)
+    time.sleep(0.5)
     print("Alt+V sent. Vessel menu should be open.")
-    
-    # Step 5: Select "Berthing Schedule" via keyboard navigation
-    # Berthing Schedule is the 10th item in the Vessel dropdown menu
-    print("Step 5: Navigating to Berthing Schedule (Down x9 + Enter)...")
-    for i in range(9):
-        pyautogui.press('down')
-        time.sleep(0.1)
-    pyautogui.press('enter')
-    print("Berthing Schedule selected via keyboard.")
+
+    # Step 5: Select "Berthing Schedule" by image match (robust to menu reorder).
+    # Falls back to Down x9 + Enter only if the image cannot be located.
+    berthing_img = os.path.join(assets_dir, 'berthing_schedule.png')
+    bs_loc = None
+    if os.path.exists(berthing_img):
+        for k in range(8):
+            bs_loc = locate_on_all_screens(berthing_img, confidence_val=0.75)
+            if bs_loc:
+                break
+            time.sleep(0.3)
+
+    if bs_loc:
+        print(f"Step 5: Clicking Berthing Schedule at {bs_loc}...")
+        pyautogui.click(bs_loc)
+    else:
+        print("Step 5: Berthing Schedule image not found; falling back to Down x9 + Enter.")
+        for _ in range(9):
+            pyautogui.press('down')
+            time.sleep(0.1)
+        pyautogui.press('enter')
+    print("Berthing Schedule selected.")
 
 def click_rcc_menu():
     """
@@ -378,7 +405,7 @@ def click_rcc_menu():
     
     print(f"Hovering over Monitoring at {loc_monitoring}...")
     pyautogui.moveTo(loc_monitoring)
-    time.sleep(1.0)
+    time.sleep(0.3)
     
     # Step 2: Find M&C menu item as anchor, then click RCC below it
     mc_item_img = os.path.join(assets_dir, 'mc_menu_item.png')
@@ -400,7 +427,7 @@ def click_rcc_menu():
         print(f"M&C found at {loc_mc}. Clicking RCC at ({rcc_x}, {rcc_y}) [M&C + 40px]...")
         pyautogui.click(rcc_x, rcc_y)
         print("RCC clicked. Waiting for window...")
-        time.sleep(3.0)
+        time.sleep(0.5)
         return True
     else:
         print("M&C menu item not found (cannot locate RCC).")
@@ -457,36 +484,54 @@ def click_mc_menu():
     print("M&C Menu not found.")
     return False
 
-def locate_on_all_screens(image_path, confidence_val=0.8):
+def locate_on_all_screens(image_path, confidence_val=0.8, return_box=False):
     """
     Locates an image on the screen, supporting multi-monitor setups.
     Captures the full virtual screen, finds the image, and calculates absolute coordinates.
+    Uses multi-scale matching (via safe_locate) for DPI robustness.
+
+    Args:
+        image_path: Path to the needle image.
+        confidence_val: Match confidence threshold.
+        return_box: If True, returns a Box-like object with absolute
+            (left, top, width, height) for the match. If False (default),
+            returns the absolute center (x, y) tuple.
+
+    Returns:
+        (x, y) tuple, Box-like object, or None.
     """
     try:
         # Capture all screens
         screenshot = ImageGrab.grab(all_screens=True)
-        
-        # Locate the image within the screenshot
-        try:
-            box = pyautogui.locate(image_path, screenshot, confidence=confidence_val)
-        except Exception:
-             # Handle ImageNotFoundException and other issues
-            box = None
-            
+
+        # Use multi-scale matching (handles 100%/125%/150% DPI)
+        box = safe_locate(image_path, screenshot, confidence=confidence_val)
+
         if box:
             # Get Virtual Screen offset (top-left of the virtual desktop)
-            # This is crucial if the primary monitor is not the left-most or top-most one
             left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
             top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
-            
-            # Calculate absolute center coordinates
-            center_x = box.left + (box.width / 2) + left_offset
-            center_y = box.top + (box.height / 2) + top_offset
+
+            abs_left = box.left + left_offset
+            abs_top = box.top + top_offset
+
+            if return_box:
+                class AbsBox:
+                    __slots__ = ("left", "top", "width", "height")
+                    def __init__(self, l, t, w, h):
+                        self.left = l
+                        self.top = t
+                        self.width = w
+                        self.height = h
+                return AbsBox(abs_left, abs_top, box.width, box.height)
+
+            center_x = abs_left + (box.width / 2)
+            center_y = abs_top + (box.height / 2)
             return (center_x, center_y)
-            
+
     except Exception as e:
         print(f"Error in multi-monitor search: {repr(e)}")
-        
+
     return None
 
 def navigate_to_mr():
@@ -601,7 +646,7 @@ def click_purchase_request():
     assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
     
     # Optimization: Check if 'Add' button is visible (Form already open)
-    add_btn_path = os.path.join(assets_dir, 'add_button.png')
+    add_btn_path = os.path.join(assets_dir, 'add_btn.png')
     if os.path.exists(add_btn_path):
         add_loc = locate_on_all_screens(add_btn_path, confidence_val=0.8)
         if add_loc:
@@ -647,12 +692,12 @@ def click_add_button():
     
     # Retry loop
     add_loc = None
-    for i in range(10): 
+    for i in range(25): 
         add_loc = locate_on_all_screens(add_btn_img, confidence_val=0.8)     
         if add_loc:
             break
-        time.sleep(1)
-        print(f"Searching for Add Button... ({i+1}/10)")
+        time.sleep(0.2)
+        print(f"Searching for Add Button... ({i+1}/25)")
         
     if add_loc:
         print(f"Found Add Button at {add_loc}. Clicking...")
@@ -680,13 +725,13 @@ def enter_pr_description(text):
     
     # Retry loop
     field_loc = None
-    for i in range(10): 
+    for i in range(25): 
         # Search for the field image
         field_loc = locate_on_all_screens(desc_field_img, confidence_val=0.8)     
         if field_loc:
             break
-        time.sleep(1)
-        print(f"Searching for Description field... ({i+1}/10)")
+        time.sleep(0.2)
+        print(f"Searching for Description field... ({i+1}/25)")
         
     if field_loc:
         print(f"Found Field at {field_loc}. Clicking center...")
@@ -725,12 +770,12 @@ def update_need_by_date():
     
     # Retry loop
     lbl_loc = None
-    for i in range(3): 
+    for i in range(10): 
         lbl_loc = locate_on_all_screens(need_by_img, confidence_val=0.7)     
         if lbl_loc:
             break
-        time.sleep(0.5) # Reduced sleep
-        print(f"Searching for Need By label... ({i+1}/3)")
+        time.sleep(0.2) # Reduced sleep
+        print(f"Searching for Need By label... ({i+1}/10)")
         
     if lbl_loc:
         print(f"Found Need By Label at {lbl_loc}. Accessing field...")
@@ -760,7 +805,7 @@ def update_need_by_date():
         time.sleep(0.1)
         
         # Fast Typing
-        pyautogui.write(new_date_str, interval=0.02) # Fast typing
+        pyautogui.write(new_date_str, interval=0.01) # Ultra Fast typing
         print(f"Need By Date updated to {new_date_str}.")
         
     else:
@@ -785,12 +830,12 @@ def set_unit_price_contract(enable=False):
     
     # Retry loop
     lbl_loc = None
-    for i in range(3): 
+    for i in range(10): 
         lbl_loc = locate_on_all_screens(lbl_img, confidence_val=0.8)     
         if lbl_loc:
             break
-        time.sleep(1)
-        print(f"Searching for Unit Price label... ({i+1}/3)")
+        time.sleep(0.2)
+        print(f"Searching for Unit Price label... ({i+1}/10)")
         
     if lbl_loc:
         print(f"Found Unit Price Label at {lbl_loc}. Setting to Y...")
@@ -839,13 +884,13 @@ def set_account_code(code_text):
     
     # Retry loop
     lbl_loc = None
-    for i in range(3): 
+    for i in range(10): 
         # Increased confidence to 0.93 to prevent matching similar labels on the left (e.g. Account Name)
         lbl_loc = locate_on_all_screens(lbl_img, confidence_val=0.93)     
         if lbl_loc:
             break
-        time.sleep(1)
-        print(f"Searching for Account Code label... ({i+1}/3)")
+        time.sleep(0.2)
+        print(f"Searching for Account Code label... ({i+1}/10)")
         
     if lbl_loc:
         print(f"Found Account Code Label at {lbl_loc} (X={lbl_loc[0]}).")
@@ -859,8 +904,8 @@ def set_account_code(code_text):
         target_y = lbl_loc[1] 
         
         # Click to focus
-        pyautogui.click(target_x, target_y, duration=0.2)
-        time.sleep(0.2)
+        pyautogui.click(target_x, target_y)
+        time.sleep(0.1)
         
         # Type Code
         # Paste didn't work. Typing didn't work. Index nav rejected by user.
@@ -872,82 +917,39 @@ def set_account_code(code_text):
         if "0501040106" in code_text:
             target_asset = "acc_code_0501040106.png"
         
-        # Full Account Codes List (Order must match Dropdown)
-        ACCOUNT_CODES_LIST = [
-            "0501030000",
-            "0501030100",
-            "0501030101",
-            "0501030102",
-            "0501030103",
-            "0501030104",
-            "0501030105",
-            "0501030106",
-            "0501030107",
-            "0501030108",
-            "0501030109",
-            "0501030110",
-            "0501030111",
-            "0501030112",
-            "0501030113",
-            "0501030114",
-            "0501030115",
-            "0501030116",
-            "0501030117",
-            "0501030118",
-            "0501030119",
-            "0501030120",
-            "0501030121",
-            "0501030122",
-            "0501030123",
-            "0501030124",
-            "0501030125",
-            "0501030126",
-            "0501030127",
-            "0501030128",
-            "0501030129",
-            "0501030130",
-            "0501030131",
-            "0501030132",
-            "0501040106"
-        ]
-
         # Handle specific visual target (Last Item) - Keeping for legacy safety
         if "0501040106" in code_text:
              print(f"Target is last item ({code_text}). Using 'End' key strategy.")
              click_x = lbl_loc[0] + 85
-             pyautogui.click(click_x, lbl_loc[1], duration=0.5)
-             time.sleep(1.0)
+             pyautogui.click(click_x, lbl_loc[1])
+             time.sleep(0.3)
              pyautogui.press('end')
-             time.sleep(0.5)
+             time.sleep(0.1)
              pyautogui.press('enter')
              return
 
-        # Find Index dynamically
-        matched_index = None
-        target_code_prefix = code_text.split('/')[0].strip() # Extract '0501030101'
-        
-        try:
-            matched_index = ACCOUNT_CODES_LIST.index(target_code_prefix)
-        except ValueError:
+        # Find Index dynamically (uses single-source-of-truth ACCOUNT_CODE_PREFIXES)
+        target_code_prefix = code_text.split('/')[0].strip()
+        matched_index = find_index_by_prefix(code_text)
+        if matched_index is None:
             print(f"Code prefix '{target_code_prefix}' not found in known list.")
-            matched_index = None
         
         if matched_index is not None:
              print(f"Target found at index {matched_index} ({target_code_prefix}). Using Index Navigation.")
              
              # Click to Open Dropdown (Optimized Offset +85px)
              click_x = lbl_loc[0] + 85
-             pyautogui.click(click_x, lbl_loc[1], duration=0.5)
-             time.sleep(1.0) # Wait for list to open
+             pyautogui.click(click_x, lbl_loc[1])
+             time.sleep(0.3) # Wait for list to open
              
              # Navigate
              pyautogui.press('home') # Ensure start at top
-             time.sleep(0.3)
+             time.sleep(0.1)
              
              # Scroll down N times
              for _ in range(matched_index):
                  pyautogui.press('down')
-                 time.sleep(0.05) # Slightly faster scroll
+                 time.sleep(0.02) # Ultra fast scroll
                  
              pyautogui.press('enter')
              print("Selected via Index Navigation.")
@@ -956,8 +958,8 @@ def set_account_code(code_text):
         # Fallback for others (Paste)
         print(f"No specific strategy for '{code_text}'. Falling back to Paste.")
         click_x = lbl_loc[0] + 85
-        pyautogui.click(click_x, lbl_loc[1], duration=0.2)
-        time.sleep(0.2)
+        pyautogui.click(click_x, lbl_loc[1])
+        time.sleep(0.1)
         import pyperclip
         pyperclip.copy(code_text)
         pyautogui.hotkey('ctrl', 'v')
@@ -982,11 +984,11 @@ def enter_part_no(part_no_text):
     
     # Retry loop
     lbl_loc = None
-    for i in range(3): 
+    for i in range(10): 
         lbl_loc = locate_on_all_screens(lbl_img, confidence_val=0.8)     
         if lbl_loc:
             break
-        time.sleep(1)
+        time.sleep(0.2)
         print(f"Searching for Part No label... ({i+1}/3)")
         
     if lbl_loc:
@@ -996,10 +998,19 @@ def enter_part_no(part_no_text):
         click_x = lbl_loc[0] + 60
         pyautogui.click(click_x, lbl_loc[1], duration=0.2)
         time.sleep(0.2)
-        
-        # Type Part No
-        pyautogui.write(part_no_text, interval=0.02)
-        time.sleep(0.3)  # Wait for input to complete
+
+        # Type Part No via clipboard (handles non-ASCII safely)
+        try:
+            import pyperclip
+            pyperclip.copy(str(part_no_text))
+            time.sleep(0.1)
+            pyautogui.hotkey('ctrl', 'a')
+            time.sleep(0.05)
+            pyautogui.hotkey('ctrl', 'v')
+        except Exception as e:
+            print(f"Clipboard paste failed ({e}); falling back to typing.")
+            pyautogui.write(str(part_no_text), interval=0.02)
+        time.sleep(0.3)
         print("Part No entered.")
             
     else:
@@ -1090,7 +1101,8 @@ def select_pr_in_approval_list(target_description):
     # 1. Find the Pair
     print("Scanning for Checkbox Pair...")
     try:
-        pair_loc = locate_on_all_screens(checkbox_img, confidence_val=0.8)
+        # Request raw Box so we can target only the TOP checkbox of the pair.
+        pair_loc = locate_on_all_screens(checkbox_img, confidence_val=0.8, return_box=True)
     except Exception as e:
         print(f"Error finding checkbox pair: {repr(e)}")
         return
@@ -1099,26 +1111,11 @@ def select_pr_in_approval_list(target_description):
         print("No checkbox pair found. Image mismatch.")
         return
 
-    print(f"Found Checkbox Pair at {pair_loc}.")
+    print(f"Found Checkbox Pair at L={pair_loc.left}, T={pair_loc.top}, W={pair_loc.width}, H={pair_loc.height}.")
 
-    # 2. Strategy Update: Click Top Half of the Pair (Header Checkbox)
-    print("Strategy: Clicking the TOP Checkbox of the detected pair.")
-    
-    # pair_loc is (left, top, width, height)
-    # We want top half. Let's aim for Top + Height/4
-    # Note: locate_on_all_screens returns (x, y) center? No, usually Box (left, top, width, height) if using locateOnScreen.
-    # But my wrapper `locate_on_all_screens` returns CENTER (x, y) if simple.
-    # Let's check `locate_on_all_screens` implementation.
-    # Step 679: returns `pyautogui.locate(..., confidence)` which returns Box?
-    # NO, wait. `pyautogui.locate` returns Box. `locateCenter` returns Point.
-    # My wrapper code in Step 679:
-    # box = pyautogui.locate(...)
-    # if box: return box
-    # So it returns a BOX (left, top, width, height).
-    
-    # Calculate Target:
+    # 2. Click TOP checkbox of the pair (Header)
     target_x = pair_loc.left + (pair_loc.width / 2)
-    target_y = pair_loc.top + (pair_loc.height / 4) # Top Quarter
+    target_y = pair_loc.top + (pair_loc.height / 4)  # Top Quarter
     
     print(f"Clicking Header Checkbox at ({target_x}, {target_y})...")
     pyautogui.click(target_x, target_y)
@@ -1172,7 +1169,6 @@ def is_hitops_running():
     except subprocess.CalledProcessError as e:
         print(f"Tasklist command failed with exit code {e.returncode}: {e.output}")
     except Exception as e:
-        print(f"Error checking process list: {e}")
         print(f"Error checking process list: {e}")
         
     print("Hitops3 application not found (No Window, No Process).")
@@ -1238,8 +1234,6 @@ def safe_locate(image_path, screenshot, confidence=0.8):
     # Only try 1.25 (125% scaling) which is most common on Windows
     fallback_scales = [1.25] 
     return locate_with_scaling(image_path, screenshot, confidence=confidence, scales=fallback_scales)
-
-import threading # Added for popup watchdog
 
 def check_popup_by_title():
     """
@@ -1435,18 +1429,18 @@ def click_pr_menu():
     
     if loc_inventory:
         print(f"Clicking Inventory Menu at {loc_inventory}...")
-        # Debug Proof
+        # Debug proof (best-effort; silently skipped on any error)
         try:
-            draw_crosshair(screenshot, loc_inventory[0] - v_phys_left, loc_inventory[1] - v_phys_top, label="Inv Target")
             screenshot.save(os.path.join(assets_dir, 'debug_inventory_click.png'))
-        except: pass
+        except Exception:
+            pass
 
         verify_and_execute_mouse(loc_inventory[0], loc_inventory[1], action="click")
         time.sleep(1.0)
-        
+
         # Step 4: Click Purchase Request
         pr_goal_img = os.path.join(assets_dir, 'purchase_request_menu.png')
-        
+
         print("Searching for Purchase Request menu item...")
         loc_pr = None
         for j in range(5):
@@ -1455,25 +1449,20 @@ def click_pr_menu():
                 break
             time.sleep(0.5)
             print(f"Searching for PR item... ({j+1}/5)")
-            
-        # OCR Fallback
+
+        # OCR Fallback (use logical virtual-screen offsets, like other OCR fallbacks)
         if not loc_pr:
             screenshot_full = ImageGrab.grab(all_screens=True)
             res_pr = ocr_helpers.find_text_in_image(screenshot_full, "Purchase Request")
             if res_pr:
-                phys_x = res_pr.left + (res_pr.width / 2) + v_phys_left
-                phys_y = res_pr.top + (res_pr.height / 2) + v_phys_top
-                lx, ly = roi_helpers.physical_to_logical(phys_x, phys_y)
-                loc_pr = (lx, ly)
-        
+                left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
+                top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
+                cx = res_pr.left + (res_pr.width / 2) + left_offset
+                cy = res_pr.top + (res_pr.height / 2) + top_offset
+                loc_pr = (cx, cy)
+
         if loc_pr:
             print(f"Clicking Purchase Request at {loc_pr}...")
-            # Save debug proof
-            try:
-                ss = ImageGrab.grab(all_screens=True)
-                draw_crosshair(ss, loc_pr[0] - v_phys_left, loc_pr[1] - v_phys_top, label="PR Target")
-                ss.save(os.path.join(assets_dir, 'debug_goal_target.png'))
-            except: pass
             verify_and_execute_mouse(loc_pr[0], loc_pr[1], action="click")
             print("Purchase Request clicked.")
             return True

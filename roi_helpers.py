@@ -39,9 +39,15 @@ def get_mc_window_rect():
     """
     Detection for Monitoring & Control (M&C) window.
     Searches for "Monitoring" or "M&C" titles.
+    Ignores the main HITOPS window to prevent false positives.
     """
+    _, hitops_hwnd = get_hitops_window_rect()
+    
     hwnd = None
     def enum_handler(h, ctx):
+        if h == hitops_hwnd:
+            return
+            
         if win32gui.IsWindowVisible(h):
             title = win32gui.GetWindowText(h)
             if "MONITOR" in title.upper() or "M&C" in title.upper():

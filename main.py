@@ -10,6 +10,7 @@ import win32con
 import tkinter as tk
 from tkinter import simpledialog, messagebox
 from tkinter import ttk
+from account_codes import ACCOUNT_CODES
 
 def run_automation(pr_description, is_unit_price, account_code, part_no=None):
     """
@@ -34,25 +35,25 @@ def run_automation(pr_description, is_unit_price, account_code, part_no=None):
              return
              
         # Form is now presumably open. Appending verify logic or wait.
-        time.sleep(2) 
+        time.sleep(0.5) 
         
         # 6. Click Add Button
-        time.sleep(0.5)
+        time.sleep(0.1)
         menu_navigator.click_add_button()
 
         # --- Enter PR Description ---
-        time.sleep(1.0) # Wait for form to open
+        time.sleep(0.2) # Wait for form to open
         menu_navigator.enter_pr_description(pr_description)
-        time.sleep(0.5)
+        time.sleep(0.1)
         menu_navigator.update_need_by_date()
-        time.sleep(0.5)
+        time.sleep(0.1)
         menu_navigator.set_unit_price_contract(is_unit_price)
-        time.sleep(0.5)
+        time.sleep(0.1)
         menu_navigator.set_account_code(account_code)
         
         # New: Enter Part No (if provided and valid)
         if part_no and len(str(part_no).strip()) > 3:
-            time.sleep(0.5)
+            time.sleep(0.1)
             menu_navigator.enter_part_no(part_no)
         else:
             print(f"Skipping Part No input: '{part_no}' is too short or potentially unsafe.")
@@ -88,44 +89,8 @@ def launch_hitops():
         unit_price_var = tk.BooleanVar()
         account_code_var = tk.StringVar()
         
-        # Account Codes
-        account_codes = [
-            "0501030000/수선유지비",
-            "0501030100/수선유지비",
-            "0501030101/장비 자재비-QC",
-            "0501030102/장비 자재비-ATC",
-            "0501030103/장비 자재비-RS",
-            "0501030104/장비 자재비-YT",
-            "0501030105/장비 자재비-YC",
-            "0501030106/장비 자재비-FL",
-            "0501030107/장비 자재비-기타",
-            "0501030108/수선유지비-외주수리-QC",
-            "0501030109/수선유지비-외주수리-ATC",
-            "0501030110/수선유지비-외주수리-RS",
-            "0501030111/수선유지비-외주수리-YT",
-            "0501030112/수선유지비-외주수리-YC",
-            "0501030113/수선유지비-외주수리-FL",
-            "0501030114/수선유지비-외주수리-기타",
-            "0501030115/시설물-야드시설물(자재)",
-            "0501030116/수선유지비-시설물-CFS시설물",
-            "0501030117/시설물-전기시설물(자재)",
-            "0501030118/시설물-외주수리",
-            "0501030119/수선유지비_작업공구-야드공구",
-            "0501030120/수선유지비_작업공구-정비공구",
-            "0501030121/수선유지비_작업공구-CFS공구",
-            "0501030122/수선유지비_작업공구-안전공구",
-            "0501030123/수선유지비_작업공구-기타공구",
-            "0501030124/수선유지비_작업소모품-야드소모품",
-            "0501030125/작업소모품-정비소모품/공구",
-            "0501030126/수선유지비_작업소모품-CFS소모품",
-            "0501030127/수선유지비_작업소모품-안전소모품",
-            "0501030128/수선유지비_작업소모품-기타소모품",
-            "0501030129/수선유지비-CNTR",
-            "0501030130/수선유지비-기타 (사고변상금등)",
-            "0501030131/장비자재비-ECH",
-            "0501030132/수선유지비-외주수리-ECH",
-            "0501040106/동력비-윤활유"
-        ]
+        # Account Codes — single source of truth
+        account_codes = ACCOUNT_CODES
         
         # UI Elements
         tk.Label(dialog, text="Enter PR Description (Title):").pack(pady=5)

@@ -88,7 +88,7 @@ def perform_login(password):
             print(f"Window activation warning: {e}")
             pyautogui.press('alt') # Wake up
         
-        time.sleep(0.5)
+        time.sleep(0.1)
 
         # 2. Click Center to Ensure Focus
         # Refresh rect after restore to get actual coordinates
@@ -105,7 +105,7 @@ def perform_login(password):
                  pyautogui.click(cx, cy)
              except Exception as e:
                  print(f"Click failed: {e}")
-             time.sleep(0.5)
+             time.sleep(0.1)
 
         # 3. Type Password
         print("Typing password...")
@@ -115,15 +115,15 @@ def perform_login(password):
         time.sleep(0.1)
 
         # Type Password
-        pyautogui.write(password, interval=0.05)
-        time.sleep(0.5)
+        pyautogui.write(password, interval=0.01)
+        time.sleep(0.1)
         
         pyautogui.press('enter')
         print("Login credentials submitted.")
         
         # 4. Wait for Main Window to Load
         print("Waiting for Main Window to load...")
-        for k in range(60):
+        for k in range(100):
             # Try broader search
             main_hwnd, main_title = get_app_window(["Maintenance", "Repair System", "HITOPS", "HPNT", "Hi-Tops", "Hyundai"]) 
             if main_hwnd:
@@ -131,9 +131,9 @@ def perform_login(password):
                  if "login" not in main_title.lower():
                      print(f"Main Window Loaded: {main_title}")
                      return True
-            time.sleep(1)
+            time.sleep(0.3)
             if k % 10 == 0:
-                print(f"Waiting for Hitops Main Window... ({k}/60)")
+                print(f"Waiting for Hitops Main Window... ({k}/100)")
                 
         print("Warning: Main Window not detected, but assuming login might have worked.")
         return True
