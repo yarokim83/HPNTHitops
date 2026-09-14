@@ -8,90 +8,104 @@ import win32con
 from ctypes import windll
 import win32api
 
-def get_hitops_window_rect():
-    """
-    Classic Win32 API method.
-    Returns (left, top, right, bottom) of the specific HiTOPS window.
-    """
-    hwnd = None
-    # Fuzzy search
-    def enum_handler(h, ctx):
-        if win32gui.IsWindowVisible(h):
-            title = win32gui.GetWindowText(h)
-            if "HITOPS" in title.upper() or "HI-TOPS" in title.upper():
-                ctx.append(h)
-                
-    found = []
-    win32gui.EnumWindows(enum_handler, found)
-    if found:
-        hwnd = found[0]
+import ctypes
+from ctypes import wintypes
+import ntpath
+import win32process
 
-    if hwnd:
+INSTALL_DIR = r"C:\Program Files (x86)\Hyundai-UNI\HITOPSIII"
+
+
+def menu_caption(menu, index):
+    # pywin32 does not expose GetMenuString on every supported build.
+    flags = win32con.MF_BYPOSITION
+    handle = wintypes.HMENU(menu)
+    length = windll.user32.GetMenuStringW(handle, index, None, 0, flags)
+    buf = ctypes.create_unicode_buffer(length + 1)
+    windll.user32.GetMenuStringW(handle, index, buf, len(buf), flags)
+    return buf.value
+
+
+def _process_path(hwnd):
+    handle = None
+    try:
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        handle = win32api.OpenProcess(0x1000, False, pid)
+        size = wintypes.DWORD(32768)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if windll.kernel32.QueryFullProcessImageNameW(
+                wintypes.HANDLE(int(handle)), 0, buf, ctypes.byref(size)):
+            return buf.value
+    except Exception:
+        pass
+    finally:
+        if handle is not None:
+            win32api.CloseHandle(handle)
+    return ''
+
+
+def _is_application_path(path):
+    root = ntpath.normcase(ntpath.normpath(INSTALL_DIR)) + '\\'
+    return bool(path) and ntpath.normcase(ntpath.normpath(path)).startswith(root)
+
+
+def application_windows():
+    """Visible top-level windows belonging to the configured HI-TOPS installation."""
+    found = []
+    def collect(hwnd, _):
+        if not win32gui.IsWindowVisible(hwnd):
+            return
+        path = _process_path(hwnd)
+        if _is_application_path(path):
+            found.append((hwnd, win32gui.GetWindowText(hwnd), path))
+    win32gui.EnumWindows(collect, None)
+    return found
+
+
+def _role(title):
+    title = title.casefold()
+    if 'monitoring' in title or 'm&c' in title:
+        return 'mc'
+    if 'rcc' in title:
+        return 'rcc'
+    if 'maintenance' in title and 'repair' in title:
+        return 'maintenance'
+    if 'hitops' in title or 'hi-tops' in title or 'login' in title:
+        return 'main'
+    return None
+
+
+def _window_for_role(role):
+    candidates = [(h, title) for h, title, _ in application_windows()
+                  if _role(title) == role and win32gui.GetClassName(h) != '#32770']
+    # Login may be a native dialog. Include it only for the main/login lookup.
+    if role == 'main' and not candidates:
+        candidates = [(h, title) for h, title, _ in application_windows()
+                      if _role(title) == 'main']
+    candidates.sort(key=lambda item: item[0] != win32gui.GetForegroundWindow())
+    for hwnd, _ in candidates:
         try:
-            rect = win32gui.GetWindowRect(hwnd)
-            return rect, hwnd
-        except:
-            pass
-            
+            return win32gui.GetWindowRect(hwnd), hwnd
+        except Exception:
+            continue
     return None, None
+
+
+def get_hitops_window_rect():
+    return _window_for_role('main')
+
 
 def get_mc_window_rect():
-    """
-    Detection for Monitoring & Control (M&C) window.
-    Searches for "Monitoring" or "M&C" titles.
-    Ignores the main HITOPS window to prevent false positives.
-    """
-    _, hitops_hwnd = get_hitops_window_rect()
-    
-    hwnd = None
-    def enum_handler(h, ctx):
-        if h == hitops_hwnd:
-            return
-            
-        if win32gui.IsWindowVisible(h):
-            title = win32gui.GetWindowText(h)
-            if "MONITOR" in title.upper() or "M&C" in title.upper():
-                ctx.append(h)
-                
-    found = []
-    win32gui.EnumWindows(enum_handler, found)
-    if found:
-        hwnd = found[0]
+    return _window_for_role('mc')
 
-    if hwnd:
-        try:
-            rect = win32gui.GetWindowRect(hwnd)
-            return rect, hwnd
-        except:
-            pass
-            
-    return None, None
+
+def get_rcc_window_rect():
+    return _window_for_role('rcc')
+
 
 def get_maintenance_window_rect():
-    """
-    Detection for Maintenance & Repair System window.
-    Searches for "Maintenance & Repair" or "Repair System" titles.
-    """
-    hwnd = None
-    def enum_handler(h, ctx):
-        if win32gui.IsWindowVisible(h):
-            title = win32gui.GetWindowText(h)
-            if "Maintenance" in title and "Repair" in title:
-                ctx.append(h)
-                
-    found = []
-    win32gui.EnumWindows(enum_handler, found)
-    if found:
-        hwnd = found[0]
+    return _window_for_role('maintenance')
 
-    if hwnd:
-        try:
-            rect = win32gui.GetWindowRect(hwnd)
-            return rect, hwnd
-        except:
-            pass
-            
-    return None, None
 
 def get_hitops_window_rect_uia():
     """

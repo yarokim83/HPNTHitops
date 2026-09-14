@@ -145,28 +145,44 @@ def _scan_for_matches(screenshot, target_text, region, invert):
 
     # --psm 11: Sparse text (menus). --oem 1: LSTM mode.
     config = '--psm 11 --oem 1'
-    data = pytesseract.image_to_data(processed, output_type=pytesseract.Output.DICT, config=config)
+    data = pytesseract.image_to_data(processed, output_type=pytesseract.Output.DICT,
+                                     config=config, timeout=5)
 
     matches = []
-    target_lower = target_text.lower()
-    n_boxes = len(data['text'])
-    for i in range(n_boxes):
-        try:
-            conf_val = int(data['conf'][i])
-        except (TypeError, ValueError):
+    target_lower = ' '.join(target_text.lower().split())
+    word_count = len(target_lower.split())
+    for i, raw in enumerate(data['text']):
+        if not raw.strip():
             continue
-        if conf_val < 30:
+        indexes = []
+        words = []
+        for j in range(i, len(data['text'])):
+            if any(data[key][j] != data[key][i]
+                   for key in ('block_num', 'par_num', 'line_num')):
+                break
+            word = data['text'][j].strip()
+            if not word:
+                continue
+            try:
+                if float(data['conf'][j]) < 30:
+                    break
+            except (TypeError, ValueError):
+                break
+            indexes.append(j)
+            words.append(word)
+            if len(words) >= word_count:
+                break
+        phrase = ' '.join(words)
+        if target_lower not in phrase.lower() or not indexes:
             continue
-        text = data['text'][i].strip()
-        if not text:
-            continue
-        if target_lower not in text.lower():
-            continue
-        left = int(data['left'][i] / scale)
-        top = int(data['top'][i] / scale)
-        width = int(data['width'][i] / scale)
-        height = int(data['height'][i] / scale)
-        matches.append(_OcrBox(left, top, width, height, conf_val, text))
+        left = min(data['left'][j] for j in indexes)
+        top = min(data['top'][j] for j in indexes)
+        right = max(data['left'][j] + data['width'][j] for j in indexes)
+        bottom = max(data['top'][j] + data['height'][j] for j in indexes)
+        conf = min(float(data['conf'][j]) for j in indexes)
+        matches.append(_OcrBox(int(left / scale), int(top / scale),
+                               int((right-left) / scale), int((bottom-top) / scale), conf, phrase))
+
     return matches
 
 def find_text_in_image(screenshot, target_text, region="full"):

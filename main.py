@@ -20,26 +20,27 @@ def run_automation(pr_description, is_unit_price, account_code, part_no=None):
     exe_path = r"C:\Program Files (x86)\Hyundai-UNI\HITOPSIII\Hitops3.exe"
     if not os.path.exists(exe_path):
         print(f"Error: Executable not found at {exe_path}")
-        return
+        return False
 
     try:
         # 1. Common Launch & Login & Maximize (Shared with M&C flow)
         if not menu_navigator.ensure_app_ready():
             print("App initialization failed. Aborting PR automation.")
-            return
+            return False
 
         # 2. Smart Menu Navigation (Parallel/Event-Driven)
         print("Executing Smart Navigation...")
         if not menu_navigator.smart_navigate_to_pr():
              print("Smart Navigation failed or timed out.")
-             return
+             return False
              
         # Form is now presumably open. Appending verify logic or wait.
         time.sleep(0.5) 
         
         # 6. Click Add Button
         time.sleep(0.1)
-        menu_navigator.click_add_button()
+        if not menu_navigator.click_add_button():
+            return False
 
         # --- Enter PR Description ---
         time.sleep(0.2) # Wait for form to open
@@ -63,7 +64,7 @@ def run_automation(pr_description, is_unit_price, account_code, part_no=None):
         print("✓ Part No entry complete!")
         print("✓ Automation stopped as requested after Part No.")
         print("="*60)
-        return
+        return True
 
     except Exception as e:
         print(f"Failed to run automation: {e}")

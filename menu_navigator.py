@@ -56,7 +56,7 @@ def verify_and_execute_mouse(log_x, log_y, action="click", jitter=0):
     if dist <= 10:
         print(f"  [Position Verify] SUCCESS (Actual: {actual_log_x}, {actual_log_y})")
     else:
-        print(f"  [Position Verify] FAILED! Distance: {int(dist)}px")
+        raise RuntimeError(f"Mouse position verification failed: {int(dist)}px")
 
     # 3. Perform Action
     if action == "click":
@@ -74,52 +74,35 @@ def verify_and_execute_mouse(log_x, log_y, action="click", jitter=0):
     return actual_log_x, actual_log_y
 
 def force_activate_window(hwnd):
-    """
-    Force-activate a window even when SetForegroundWindow alone fails.
-    Uses AttachThreadInput trick to bypass Windows foreground restrictions.
-    """
-    try:
-        # Step 1: If minimized, restore it
-        if win32gui.IsIconic(hwnd):
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            time.sleep(0.3)
-        
-        # Step 2: Get thread IDs
-        foreground_hwnd = win32gui.GetForegroundWindow()
-        foreground_thread_id = win32process.GetWindowThreadProcessId(foreground_hwnd)[0]
-        target_thread_id = win32process.GetWindowThreadProcessId(hwnd)[0]
-        
-        # Step 3: Attach to foreground thread, activate, then detach
-        attached = False
-        if foreground_thread_id != target_thread_id:
-            ctypes.windll.user32.AttachThreadInput(foreground_thread_id, target_thread_id, True)
-            attached = True
+    """Verify foreground ownership; retry using the calling thread's input queue."""
+    if not hwnd or not win32gui.IsWindow(hwnd):
+        return False
+    for attempt in range(2):
+        attached = []
+        current_thread = ctypes.windll.kernel32.GetCurrentThreadId()
         try:
-            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            if attempt:
+                foreground = win32gui.GetForegroundWindow()
+                targets = [hwnd] + ([foreground] if foreground else [])
+                for target in targets:
+                    thread_id = win32process.GetWindowThreadProcessId(target)[0]
+                    if thread_id != current_thread and thread_id not in attached:
+                        if ctypes.windll.user32.AttachThreadInput(current_thread, thread_id, True):
+                            attached.append(thread_id)
             win32gui.BringWindowToTop(hwnd)
             win32gui.SetForegroundWindow(hwnd)
+        except Exception as exc:
+            print(f"Activation attempt {attempt + 1} failed: {exc}")
         finally:
-            if attached:
-                ctypes.windll.user32.AttachThreadInput(foreground_thread_id, target_thread_id, False)
-
+            for thread_id in reversed(attached):
+                ctypes.windll.user32.AttachThreadInput(current_thread, thread_id, False)
         time.sleep(0.3)
-        
-        # Verify activation
-        current_fg = win32gui.GetForegroundWindow()
-        if current_fg == hwnd:
-            print(f"Window activated successfully (HWND: {hwnd})")
+        if win32gui.GetForegroundWindow() == hwnd:
             return True
-        else:
-            print(f"Warning: Foreground is {current_fg}, not {hwnd}. Trying Alt trick...")
-            # Fallback: Alt key trick
-            pyautogui.press('alt')
-            time.sleep(0.1)
-            win32gui.SetForegroundWindow(hwnd)
-            time.sleep(0.3)
-            return True
-    except Exception as e:
-        print(f"force_activate_window failed: {e}")
-        return False
+    return False
+
 
 # ============================================================
 # Shared Functions (Used by both Purchase and M&C flows)
@@ -167,6 +150,7 @@ def save_password(new_password):
         print(f"[Config] Password saved to: {config_path}")
     except OSError as e:
         print(f"[Config] FAILED to save password ({config_path}): {e}")
+        raise
 
 def ensure_app_ready():
     """
@@ -197,279 +181,29 @@ def ensure_app_ready():
     print("Login successful.")
     
     # Step 3: Maximize & Foreground
-    ensure_hitops_maximized()
-    
-    return True
+    return ensure_hitops_maximized()
 
 def run_mc_sequence():
-    """
-    Executes the M&C automation sequence.
-    1. ensure_app_ready() (Launch + Login + Maximize)
-    2. Hover 'Monitoring'
-    3. Click 'M&C'
-    4. Click 'Vessel'
-    5. Click 'Berthing Schedule'
-    """
-    print("Starting M&C Automation Sequence...")
-    
-    # Check if M&C window is already open
-    _, mc_hwnd = roi_helpers.get_mc_window_rect()
-    if mc_hwnd:
-        print(f"Monitoring & Control window detected (HWND: {mc_hwnd}). Skipping initial navigation.")
-        try:
-            # Maximize and bring to front
-            win32gui.ShowWindow(mc_hwnd, win32con.SW_MAXIMIZE)
-            win32gui.SetForegroundWindow(mc_hwnd)
-            time.sleep(0.2)
-            
-            # Click center of M&C window to ensure true input focus
-            rect = win32gui.GetWindowRect(mc_hwnd)
-            cx = (rect[0] + rect[2]) // 2
-            cy = (rect[1] + rect[3]) // 2
-            pyautogui.click(cx, cy)
-            time.sleep(0.2)
-            print(f"M&C window maximized and focused (clicked center at {cx}, {cy}).")
-        except Exception as e:
-            print(f"Warning: Could not activate M&C window: {e}")
-        
-        # Proceed to searching for Vessel menu
-        goto_vessel = True
-    else:
-        print("Monitoring & Control window not found. Performing full navigation sequence...")
-        # Step 0: Common Launch/Login/Maximize
-        if not ensure_app_ready():
-            print("App initialization failed. Aborting M&C sequence.")
-            return False
-        goto_vessel = False
+    from navigation import run_mc
+    return run_mc()
 
-    assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
-    
-    if not goto_vessel:
-        print("Searching for Monitoring Menu...")
-        monitoring_img = os.path.join(assets_dir, 'monitoring_menu.png')
-        mc_item_img = os.path.join(assets_dir, 'mc_menu_item.png')
-        
-        # Step 2: Find and Hover Monitoring (with Retry and OCR fallback)
-        loc_monitoring = None
-        for i in range(10): # Try for 10 seconds
-            # 1. Image Search
-            loc_monitoring = locate_on_all_screens(monitoring_img, confidence_val=0.7)
-            
-            # 2. OCR Fallback (If image search fails)
-            if not loc_monitoring:
-                screenshot = ImageGrab.grab(all_screens=True)
-                res = ocr_helpers.find_text_in_image(screenshot, "Monitoring")
-                if res:
-                    # Add virtual screen offset
-                    left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
-                    top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
-                    # Calculate center from Box object
-                    center_x = res.left + (res.width / 2) + left_offset
-                    center_y = res.top + (res.height / 2) + top_offset
-                    loc_monitoring = (center_x, center_y)
-
-            if loc_monitoring:
-                break
-                
-            time.sleep(1)
-            print(f"Searching for Monitoring... ({i+1}/10)")
-
-        if loc_monitoring:
-            print(f"Hovering over Monitoring at {loc_monitoring}...")
-            pyautogui.moveTo(loc_monitoring)
-            time.sleep(0.3) # Wait for submenu
-            
-            # Step 3: Click M&C
-            loc_mc = locate_on_all_screens(mc_item_img, confidence_val=0.7)
-            # Detailed retry for M&C item too
-            if not loc_mc:
-                 for j in range(5):
-                     time.sleep(0.5)
-                     loc_mc = locate_on_all_screens(mc_item_img, confidence_val=0.7)
-                     if loc_mc: break
-
-            if loc_mc:
-                print(f"Clicking M&C Menu Item at {loc_mc}...")
-                pyautogui.click(loc_mc)
-                print("M&C clicked. Waiting for window...")
-                time.sleep(0.5)
-                
-                # Dismiss any popup that may appear after M&C click
-                print("Dismissing any popup (pressing Enter)...")
-                pyautogui.press('enter')
-                time.sleep(0.2)
-                
-                # Wait for M&C window to actually appear
-                mc_check = None
-                for wait_i in range(15):
-                    _, mc_check = roi_helpers.get_mc_window_rect()
-                    if mc_check:
-                        print(f"M&C window detected (HWND: {mc_check})")
-                        break
-                    time.sleep(1)
-                    print(f"Waiting for M&C window... ({wait_i+1}/15)")
-                
-                if not mc_check:
-                    print("M&C window did not appear after popup dismissal.")
-                    return False
-            else:
-                print("M&C menu item not found.")
-                return False
-        else:
-            print("Monitoring menu not found.")
-            return False
-    
-    # Step 4: Activate M&C window and open Vessel menu
-    _, mc_hwnd_now = roi_helpers.get_mc_window_rect()
-    if mc_hwnd_now:
-        try:
-            win32gui.ShowWindow(mc_hwnd_now, win32con.SW_MAXIMIZE)
-            time.sleep(0.2)
-            force_activate_window(mc_hwnd_now)
-            time.sleep(0.3)
-            print(f"M&C window (HWND: {mc_hwnd_now}) activated and brought to front.")
-        except Exception as e:
-            print(f"Warning: Could not activate M&C window: {e}")
-    else:
-        print("Warning: M&C window not found before Alt+V. Proceeding anyway...")
-    
-    print("Step 4: Opening Vessel menu (Alt+V)...")
-    pyautogui.hotkey('alt', 'v')
-    time.sleep(0.5)
-    print("Alt+V sent. Vessel menu should be open.")
-
-    # Step 5: Select "Berthing Schedule" by image match (robust to menu reorder).
-    # Falls back to Down x9 + Enter only if the image cannot be located.
-    berthing_img = os.path.join(assets_dir, 'berthing_schedule.png')
-    bs_loc = None
-    if os.path.exists(berthing_img):
-        for k in range(8):
-            bs_loc = locate_on_all_screens(berthing_img, confidence_val=0.75)
-            if bs_loc:
-                break
-            time.sleep(0.3)
-
-    if bs_loc:
-        print(f"Step 5: Clicking Berthing Schedule at {bs_loc}...")
-        pyautogui.click(bs_loc)
-    else:
-        print("Step 5: Berthing Schedule image not found; falling back to Down x9 + Enter.")
-        for _ in range(9):
-            pyautogui.press('down')
-            time.sleep(0.1)
-        pyautogui.press('enter')
-    print("Berthing Schedule selected.")
 
 def click_rcc_menu():
-    """
-    RCC Automation Sequence:
-    1. Launch/Login/Maximize HI-TOPS
-    2. Hover 'Monitoring' to open submenu
-    3. Click 'RCC' (located below M&C in the submenu)
-    """
-    print("Starting RCC Automation Sequence...")
-    
-    # Step 0: Common Launch/Login/Maximize
-    if not ensure_app_ready():
-        print("App initialization failed. Aborting RCC sequence.")
-        return False
-    
-    assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
-    
-    # Step 1: Find and Hover Monitoring
-    print("Searching for Monitoring Menu...")
-    monitoring_img = os.path.join(assets_dir, 'monitoring_menu.png')
-    
-    loc_monitoring = None
-    for i in range(10):
-        loc_monitoring = locate_on_all_screens(monitoring_img, confidence_val=0.7)
-        
-        if not loc_monitoring:
-            screenshot = ImageGrab.grab(all_screens=True)
-            res = ocr_helpers.find_text_in_image(screenshot, "Monitoring")
-            if res:
-                left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
-                top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
-                center_x = res.left + (res.width / 2) + left_offset
-                center_y = res.top + (res.height / 2) + top_offset
-                loc_monitoring = (center_x, center_y)
-        
-        if loc_monitoring:
-            break
-        time.sleep(1)
-        print(f"Searching for Monitoring... ({i+1}/10)")
-    
-    if not loc_monitoring:
-        print("Monitoring menu not found.")
-        return False
-    
-    print(f"Hovering over Monitoring at {loc_monitoring}...")
-    pyautogui.moveTo(loc_monitoring)
-    time.sleep(0.3)
-    
-    # Step 2: Find M&C menu item as anchor, then click RCC below it
-    mc_item_img = os.path.join(assets_dir, 'mc_menu_item.png')
-    
-    print("Searching for M&C menu item as anchor for RCC...")
-    loc_mc = None
-    for j in range(5):
-        loc_mc = locate_on_all_screens(mc_item_img, confidence_val=0.7)
-        if loc_mc:
-            break
-        time.sleep(0.5)
-        print(f"Searching for M&C anchor... ({j+1}/5)")
-    
-    if loc_mc:
-        # RCC is directly below M&C in the submenu
-        # Use offset of 40px down from M&C center
-        rcc_x = loc_mc[0]
-        rcc_y = loc_mc[1] + 40
-        print(f"M&C found at {loc_mc}. Clicking RCC at ({rcc_x}, {rcc_y}) [M&C + 40px]...")
-        pyautogui.click(rcc_x, rcc_y)
-        print("RCC clicked. Waiting for window...")
-        time.sleep(0.5)
-        return True
-    else:
-        print("M&C menu item not found (cannot locate RCC).")
-        return False
+    from navigation import run_rcc
+    return run_rcc()
+
 
 def ensure_hitops_maximized():
-    """
-    Finds the HI-TOPS window and maximizes it if not already maximized.
-    Also brings it to the foreground.
-    """
-    hitops_rect, hitops_hwnd = roi_helpers.get_hitops_window_rect()
-    if hitops_hwnd:
-        try:
-            # Check current size directly
-            rect = win32gui.GetWindowRect(hitops_hwnd)
-            width = rect[2] - rect[0]
-            height = rect[3] - rect[1]
-            print(f"Current Window Size: {width}x{height}")
+    _, hwnd = roi_helpers.get_hitops_window_rect()
+    if not hwnd:
+        return False
+    try:
+        win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
+        return force_activate_window(hwnd)
+    except Exception as exc:
+        print(f"Window maximization failed: {exc}")
+        return False
 
-            # Check maximized state via GetWindowPlacement
-            placement = win32gui.GetWindowPlacement(hitops_hwnd)
-            is_maximized = (placement[1] == win32con.SW_SHOWMAXIMIZED)
-
-            if is_maximized:
-                print("Window is already maximized. Skipping resize.")
-            else:
-                # Check minimized state via IsIconic
-                if win32gui.IsIconic(hitops_hwnd):
-                    win32gui.ShowWindow(hitops_hwnd, win32con.SW_RESTORE)
-                    time.sleep(0.5)
-                print("Maximizing window for reliable menu detection...")
-                win32gui.ShowWindow(hitops_hwnd, win32con.SW_MAXIMIZE)
-                time.sleep(1.5)  # Wait for animation
-
-            # Always Bring to front
-            win32gui.SetForegroundWindow(hitops_hwnd)
-            time.sleep(0.5)
-            print("Hitops window activated and maximized.")
-        except Exception as e:
-            print(f"Window maximization warning: {e}")
-    else:
-        print("Warning: Could not find HI-TOPS window to maximize.")
 
 def click_mc_menu():
     """Clicks the M&C menu using mc_icon.png as asset."""
@@ -686,7 +420,7 @@ def click_add_button():
     
     if not os.path.exists(add_btn_img):
         print(f"Error: Image not found at {add_btn_img}")
-        return
+        return False
 
     print("Looking for 'Add' button...")
     
@@ -703,8 +437,10 @@ def click_add_button():
         print(f"Found Add Button at {add_loc}. Clicking...")
         pyautogui.click(add_loc)
         print("Add Button clicked.")
+        return True
     else:
         print("Failed to find 'Add' button.")
+        return False
 
 def enter_pr_description(text):
     """
@@ -1223,7 +959,9 @@ def safe_locate(image_path, screenshot, confidence=0.8):
     """
     # 1. Try Simple 1.0x first (Fastest)
     try:
-        return pyautogui.locate(image_path, screenshot, confidence=confidence)
+        box = pyautogui.locate(image_path, screenshot, confidence=confidence)
+        if box is not None:
+            return box
 
     except pyautogui.ImageNotFoundException:
         pass # Fallthrough to scaling
@@ -1232,7 +970,7 @@ def safe_locate(image_path, screenshot, confidence=0.8):
 
     # 2. Try Multi-Scale (DPI fallback) - REDUCED for speed
     # Only try 1.25 (125% scaling) which is most common on Windows
-    fallback_scales = [1.25] 
+    fallback_scales = [1.25, 1.5, 0.8, 2 / 3]
     return locate_with_scaling(image_path, screenshot, confidence=confidence, scales=fallback_scales)
 
 def check_popup_by_title():
@@ -1334,6 +1072,7 @@ def click_pr_menu():
         print("App initialization failed. Aborting PR sequence.")
         return False
     
+    from navigation import find_item, mouse
     assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
     
     # Step 1: Find and Click Maintenance & Repair Tile
@@ -1341,33 +1080,13 @@ def click_pr_menu():
     repair_icon_img = os.path.join(assets_dir, 'repair_icon.png')
     
     # Get Hitops window bounds to filter OCR (avoid false positives from other monitors)
-    hitops_rect, _ = roi_helpers.get_hitops_window_rect()
+    hitops_rect, hitops_hwnd = roi_helpers.get_hitops_window_rect()
     hitops_x_max = hitops_rect[2] if hitops_rect else 1600  # right edge of Hitops window (logical)
     
     loc_tile = None
     for i in range(10):
-        # 1. Image Search
-        loc_tile = locate_on_all_screens(repair_icon_img, confidence_val=0.7)
-        
-        # 2. OCR Fallback (Maintenance) — restricted to Hitops window area
-        if not loc_tile:
-            screenshot = ImageGrab.grab(all_screens=True)
-            left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
-            top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
-            
-            res = ocr_helpers.find_text_in_image(screenshot, "Maintenance")
-            
-            if res:
-                center_x = res.left + (res.width / 2) + left_offset
-                center_y = res.top + (res.height / 2) + top_offset
-                
-                # Filter: must be within Hitops window x-range (not VS Code / secondary monitor)
-                if center_x <= hitops_x_max:
-                    print(f"  OCR Candidate (in Hitops): {center_x}, {center_y}")
-                    loc_tile = (center_x, center_y)
-                else:
-                    print(f"  OCR Candidate rejected (x={center_x:.0f} > hitops_x_max={hitops_x_max})")
-        
+        loc_tile = find_item(hitops_hwnd, 'repair_icon.png', 'Maintenance')
+
         if loc_tile:
             break
         time.sleep(1)
@@ -1388,7 +1107,8 @@ def click_pr_menu():
     except: pass
 
     # Use verify_and_execute_mouse for click
-    verify_and_execute_mouse(loc_tile[0], loc_tile[1], action="click")
+    if not mouse(hitops_hwnd, loc_tile):
+        return False
     time.sleep(2.5) # Wait for window to open
     
     # Step 2: Wait for Maintenance & Repair System Window
@@ -1410,9 +1130,11 @@ def click_pr_menu():
     # Ensure window is active/maximized
     try:
         win32gui.ShowWindow(main_hwnd, win32con.SW_MAXIMIZE)
-        win32gui.SetForegroundWindow(main_hwnd)
+        if not force_activate_window(main_hwnd):
+            return False
         time.sleep(1.0)
-    except: pass
+    except Exception:
+        return False
 
     # Step 3: Find 'Inventory' Menu in the New Window (with retry)
     print("Searching for 'Inventory' in Maintenance Window...")
@@ -1421,7 +1143,7 @@ def click_pr_menu():
     loc_inventory = None
     
     for _ in range(5):
-        loc_inventory = locate_on_all_screens(inventory_img, confidence_val=0.8)
+        loc_inventory = find_item(main_hwnd, 'inventory_menu.png', 'Inventory')
         if loc_inventory:
             print(f"Found 'Inventory' via image search at {loc_inventory}")
             break
@@ -1435,7 +1157,8 @@ def click_pr_menu():
         except Exception:
             pass
 
-        verify_and_execute_mouse(loc_inventory[0], loc_inventory[1], action="click")
+        if not mouse(main_hwnd, loc_inventory):
+            return False
         time.sleep(1.0)
 
         # Step 4: Click Purchase Request
@@ -1444,26 +1167,16 @@ def click_pr_menu():
         print("Searching for Purchase Request menu item...")
         loc_pr = None
         for j in range(5):
-            loc_pr = locate_on_all_screens(pr_goal_img, confidence_val=0.7)
+            loc_pr = find_item(main_hwnd, 'purchase_request_menu.png', 'Purchase Request')
             if loc_pr:
                 break
             time.sleep(0.5)
             print(f"Searching for PR item... ({j+1}/5)")
 
-        # OCR Fallback (use logical virtual-screen offsets, like other OCR fallbacks)
-        if not loc_pr:
-            screenshot_full = ImageGrab.grab(all_screens=True)
-            res_pr = ocr_helpers.find_text_in_image(screenshot_full, "Purchase Request")
-            if res_pr:
-                left_offset = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
-                top_offset = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
-                cx = res_pr.left + (res_pr.width / 2) + left_offset
-                cy = res_pr.top + (res_pr.height / 2) + top_offset
-                loc_pr = (cx, cy)
-
         if loc_pr:
             print(f"Clicking Purchase Request at {loc_pr}...")
-            verify_and_execute_mouse(loc_pr[0], loc_pr[1], action="click")
+            if not mouse(main_hwnd, loc_pr):
+                return False
             print("Purchase Request clicked.")
             return True
         else:

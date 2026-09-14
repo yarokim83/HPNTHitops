@@ -7,26 +7,32 @@ import roi_helpers
 import pyautogui
 
 # Global configuration
-pyautogui.FAILSAFE = False
+pyautogui.FAILSAFE = True
 
 def window_enum_handler(hwnd, resultList):
     if win32gui.IsWindowVisible(hwnd):
         resultList.append((hwnd, win32gui.GetWindowText(hwnd)))
 
 def get_app_window(partial_title_list):
-    top_windows = []
-    win32gui.EnumWindows(window_enum_handler, top_windows)
-    for hwnd, title in top_windows:
-        for partial_title in partial_title_list:
-             if partial_title.lower() in title.lower():
-                 if "outlook" in title.lower():
-                     continue
-                 if "explorer" in title.lower() or "파일 탐색기" in title.lower():
-                     continue
-                 if "everything" in title.lower():
-                     continue
-                 return hwnd, title
+    for hwnd, title, _ in roi_helpers.application_windows():
+        if any(part.casefold() in title.casefold() for part in partial_title_list):
+            return hwnd, title
     return None, None
+
+
+def is_login(hwnd):
+    if 'login' in win32gui.GetWindowText(hwnd).lower():
+        return True
+    fields = []
+    def inspect(child, out):
+        # Standard password edits, including WindowsForms edit class names.
+        if ('edit' in win32gui.GetClassName(child).lower()
+                and win32gui.IsWindowVisible(child)
+                and win32gui.GetWindowLong(child, win32con.GWL_STYLE) & 0x20):
+            out.append(child)
+    win32gui.EnumChildWindows(hwnd, inspect, fields)
+    return bool(fields)
+
 
 def perform_login(password):
     """
@@ -52,12 +58,7 @@ def perform_login(password):
                 width = rect[2] - rect[0]
                 height = rect[3] - rect[1]
                 
-                # Heuristic: Login window is small (e.g. < 1000px width)
-                if width < 1000:
-                    is_login_window = True
-                    print(f"Window size ({width}x{height}) suggests Login Screen.")
-                elif "login" in title.lower():
-                     is_login_window = True
+                is_login_window = is_login(hwnd)
                 
                 break
         except:
@@ -90,6 +91,9 @@ def perform_login(password):
         
         time.sleep(0.1)
 
+        if win32gui.GetForegroundWindow() != hwnd:
+            return False
+
         # 2. Click Center to Ensure Focus
         # Refresh rect after restore to get actual coordinates
         try:
@@ -106,6 +110,9 @@ def perform_login(password):
              except Exception as e:
                  print(f"Click failed: {e}")
              time.sleep(0.1)
+
+        if win32gui.GetForegroundWindow() != hwnd:
+            return False
 
         # 3. Type Password
         print("Typing password...")
@@ -128,15 +135,15 @@ def perform_login(password):
             main_hwnd, main_title = get_app_window(["Maintenance", "Repair System", "HITOPS", "HPNT", "Hi-Tops", "Hyundai"]) 
             if main_hwnd:
                  # Check if title changed from Login
-                 if "login" not in main_title.lower():
+                 if not is_login(main_hwnd):
                      print(f"Main Window Loaded: {main_title}")
                      return True
             time.sleep(0.3)
             if k % 10 == 0:
                 print(f"Waiting for Hitops Main Window... ({k}/100)")
                 
-        print("Warning: Main Window not detected, but assuming login might have worked.")
-        return True
+        print("Main Window not detected after login timeout.")
+        return False
 
     else:
         print("Detected window does not appear to be the Login screen. Assuming already logged in.")

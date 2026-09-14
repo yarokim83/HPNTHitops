@@ -6,6 +6,8 @@ import os
 import time
 import main
 import menu_navigator
+import navigation
+from tkinter import messagebox
 import ocr_helpers
 from account_codes import ACCOUNT_CODES
 import pystray
@@ -455,7 +457,11 @@ class PRMakerWidget(ctk.CTk):
         def do_save():
             new_pw = new_entry.get().strip()
             if new_pw:
-                menu_navigator.save_password(new_pw)
+                try:
+                    menu_navigator.save_password(new_pw)
+                except OSError as exc:
+                    messagebox.showerror("암호 저장 실패", str(exc), parent=dialog)
+                    return
                 print("Password updated successfully.")
             dialog.destroy()
 
@@ -586,19 +592,30 @@ class PRMakerWidget(ctk.CTk):
         if self.is_running:
             print(f"[{task_name}] Ignored: another task is already running.")
             return
+        try:
+            navigation.setup_logging()
+        except OSError as exc:
+            messagebox.showerror("로그 초기화 실패", str(exc), parent=self)
+            return
         self.is_running = True
         self._apply_button_style(button, state="disabled", style=running_style)
 
         def worker():
             try:
-                print(f"[{task_name}] Started.")
+                navigation.log.info("%s started", task_name)
                 result = task_fn()
                 if result is False:
-                    print(f"[{task_name}] Failed.")
+                    navigation.log.error("%s failed", task_name)
+                    self.after(0, lambda: messagebox.showwarning(
+                        "자동화 중단", f"{task_name}: 화면 진입을 확인하지 못했습니다.\n"
+                        "HI-TOPS 창과 오류 팝업을 확인해 주세요.\n"
+                        "기록: %LOCALAPPDATA%\\PRMaker\\logs\\navigation.log", parent=self))
                 else:
-                    print(f"[{task_name}] Done.")
+                    navigation.log.info("%s completed", task_name)
             except Exception as e:
-                print(f"[{task_name}] Error: {e}")
+                navigation.log.exception("%s error", task_name)
+                self.after(0, lambda error=str(e): messagebox.showerror(
+                    "자동화 오류", f"{task_name}: {error}", parent=self))
             finally:
                 self.is_running = False
                 self.after(0, lambda: self._apply_button_style(
@@ -632,7 +649,7 @@ class PRMakerWidget(ctk.CTk):
 
         # Bind args via closure so the shared runner stays argument-free.
         def task():
-            main.run_automation(desc, is_unit_price, account, part_no)
+            return main.run_automation(desc, is_unit_price, account, part_no)
 
         self._run_task(
             task,
