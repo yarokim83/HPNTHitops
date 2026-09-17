@@ -1,7 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
+from pathlib import Path
 
-datas = [('assets', 'assets')]
+datas = [(str(p), 'assets') for p in Path('assets').iterdir()
+         if p.suffix in ('.png', '.ico') and not p.name.startswith(('debug_', 'manual_'))
+         and p.name != 'berthing_schedule.png']
 binaries = []
 hiddenimports = ['win32com.client']
 tmp_ret = collect_all('customtkinter')
@@ -21,7 +24,8 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['matplotlib'],
+    excludes=['matplotlib', 'torch', 'torchvision', 'torchaudio', 'functorch',
+              'PyQt5', 'PyQt6', 'PySide2', 'PySide6', 'pywinauto', 'IPython'],
     noarchive=False,
     optimize=0,
 )

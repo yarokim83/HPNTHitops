@@ -13,62 +13,22 @@ from tkinter import ttk
 from account_codes import ACCOUNT_CODES
 
 def run_automation(pr_description, is_unit_price, account_code, part_no=None):
-    """
-    Core automation logic, decoupled from UI.
-    Executing this function runs the full PR creation flow.
-    """
-    exe_path = r"C:\Program Files (x86)\Hyundai-UNI\HITOPSIII\Hitops3.exe"
-    if not os.path.exists(exe_path):
-        print(f"Error: Executable not found at {exe_path}")
+    import task_control as control
+    import pr_form
+    import roi_helpers
+    import navigation
+    description, part = pr_description.strip(), (part_no or '').strip()
+    pr_form.validate(description, account_code, part)
+    if not menu_navigator.ensure_app_ready():
         return False
+    control.stage('Purchase Request 메뉴 여는 중')
+    if not menu_navigator.click_pr_menu(ready=True):
+        return False
+    hwnd = navigation.wait_window(roi_helpers.get_pr_window_rect)
+    if not hwnd or not menu_navigator.force_activate_window(hwnd):
+        return False
+    return pr_form.fill(hwnd, description, is_unit_price, account_code, part)
 
-    try:
-        # 1. Common Launch & Login & Maximize (Shared with M&C flow)
-        if not menu_navigator.ensure_app_ready():
-            print("App initialization failed. Aborting PR automation.")
-            return False
-
-        # 2. Smart Menu Navigation (Parallel/Event-Driven)
-        print("Executing Smart Navigation...")
-        if not menu_navigator.smart_navigate_to_pr():
-             print("Smart Navigation failed or timed out.")
-             return False
-             
-        # Form is now presumably open. Appending verify logic or wait.
-        time.sleep(0.5) 
-        
-        # 6. Click Add Button
-        time.sleep(0.1)
-        if not menu_navigator.click_add_button():
-            return False
-
-        # --- Enter PR Description ---
-        time.sleep(0.2) # Wait for form to open
-        menu_navigator.enter_pr_description(pr_description)
-        time.sleep(0.1)
-        menu_navigator.update_need_by_date()
-        time.sleep(0.1)
-        menu_navigator.set_unit_price_contract(is_unit_price)
-        time.sleep(0.1)
-        menu_navigator.set_account_code(account_code)
-        
-        # New: Enter Part No (if provided and valid)
-        if part_no and len(str(part_no).strip()) > 3:
-            time.sleep(0.1)
-            menu_navigator.enter_part_no(part_no)
-        else:
-            print(f"Skipping Part No input: '{part_no}' is too short or potentially unsafe.")
-        
-        # 7. Program complete
-        print("\n" + "="*60)
-        print("✓ Part No entry complete!")
-        print("✓ Automation stopped as requested after Part No.")
-        print("="*60)
-        return True
-
-    except Exception as e:
-        print(f"Failed to run automation: {e}")
-        raise e
 
 def launch_hitops():
     """

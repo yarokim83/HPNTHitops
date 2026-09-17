@@ -1,25 +1,17 @@
 @echo off
-echo =======================================================
-echo  Building PRMaker Widget Executable (Robust Mode v2)
-echo =======================================================
-
-echo [1/3] Ensuring dependencies...
-python -m pip install pyinstaller pywin32 customtkinter pillow pyautogui pytesseract pynput pywinauto numpy pystray
-
-echo [2/3] Running PyInstaller via Python Module...
-python -m PyInstaller --noconsole --onefile --name "PRMakerWidget" ^
-    --add-data "assets;assets" ^
-    --collect-all customtkinter ^
-    --collect-all numpy ^
-    --collect-all pystray ^
-    --hidden-import win32com.client ^
-    --exclude-module matplotlib ^
-    --icon "assets/taskbar_icon.ico" ^
-    PRMakerWidget.py
-
-echo [3/3] Build Complete!
-echo -------------------------------------------------------
-echo The executable is located at: dist\PRMakerWidget.exe
-echo You can move this .exe file anywhere.
-echo -------------------------------------------------------
-pause
+setlocal
+cd /d "%~dp0"
+if not exist "build\venv\Scripts\python.exe" (
+    py -3.12 -m venv build\venv
+    if errorlevel 1 exit /b 1
+)
+"build\venv\Scripts\python.exe" -m pip install -r requirements-build.lock
+if errorlevel 1 exit /b 1
+"build\venv\Scripts\python.exe" -B -m unittest discover -s tests -p "*_regression.py"
+if errorlevel 1 exit /b 1
+"build\venv\Scripts\python.exe" -m PyInstaller --noconfirm --distpath dist\release --workpath build\release PRMakerWidget.spec
+if errorlevel 1 exit /b 1
+"dist\release\PRMakerWidget.exe" --self-check
+if errorlevel 1 exit /b 1
+echo Build verified: dist\release\PRMakerWidget.exe
+echo Install with: powershell -ExecutionPolicy Bypass -File install.ps1

@@ -66,7 +66,7 @@ def _role(title):
     title = title.casefold()
     if 'monitoring' in title or 'm&c' in title:
         return 'mc'
-    if 'rcc' in title:
+    if 'rcc' in title or 'remote control center' in title:
         return 'rcc'
     if 'maintenance' in title and 'repair' in title:
         return 'maintenance'
@@ -105,6 +105,21 @@ def get_rcc_window_rect():
 
 def get_maintenance_window_rect():
     return _window_for_role('maintenance')
+
+
+def get_pr_window_rect():
+    """PR can be a separate top-level window or an MDI child."""
+    roots = []
+    for hwnd, title, _ in application_windows():
+        candidates = [(hwnd, title)]
+        win32gui.EnumChildWindows(hwnd, lambda h, out: out.append((h, win32gui.GetWindowText(h))), candidates)
+        if any(win32gui.IsWindowVisible(h) and any(word in text.casefold()
+               for word in ('purchase request', 'purchase requisition')) for h, text in candidates):
+            roots.append(hwnd)
+    roots.sort(key=lambda h: h != win32gui.GetForegroundWindow())
+    for hwnd in roots:
+        return win32gui.GetWindowRect(hwnd), hwnd
+    return None, None
 
 
 def get_hitops_window_rect_uia():

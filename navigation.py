@@ -1,11 +1,13 @@
+import task_control as control
+time = control.Clock
 """Verified, bounded navigation for the HI-TOPS Monitoring menus."""
 import logging
 from logging.handlers import RotatingFileHandler
 import os
-import time
 
 from PIL import Image, ImageGrab
-import pyautogui
+import pyautogui as _pyautogui
+pyautogui = control.Input(_pyautogui)
 import win32api
 import win32con
 import win32gui
@@ -13,6 +15,8 @@ import win32gui
 import menu_navigator as legacy
 import ocr_helpers
 import roi_helpers
+import image_matcher
+import dpi_support
 
 log = logging.getLogger('PRMaker')
 _asset_validity = {}
@@ -40,22 +44,21 @@ def activate(hwnd):
     if not hwnd or not win32gui.IsWindow(hwnd):
         return False
     win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
-    return legacy.force_activate_window(hwnd) and win32gui.GetForegroundWindow() == hwnd
+    success = legacy.force_activate_window(hwnd) and win32gui.GetForegroundWindow() == hwnd
+    if success:
+        control.bind_window(hwnd)
+    return success
 
 
-def find_item(hwnd, asset, label):
+def find_item(hwnd, asset, label, deadline=None):
     """Search only the visible target window, preserving negative screen origins."""
+    control.checkpoint()
+    deadline = deadline if deadline is not None else time.monotonic() + 4
     if win32gui.GetForegroundWindow() != hwnd:
         return None
     left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-    vx = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
-    vy = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
-    shot = ImageGrab.grab(all_screens=True)
-    left, top = max(left, vx), max(top, vy)
-    right, bottom = min(right, vx + shot.width), min(bottom, vy + shot.height)
-    if right <= left or bottom <= top:
-        return None
-    crop = shot.crop((left - vx, top - vy, right - vx, bottom - vy))
+    # Request only the target window. Coordinates remain absolute on negative-origin monitors.
+    crop = ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True)
     path = os.path.join(os.path.dirname(__file__), 'assets', asset)
     if path not in _asset_validity:
         try:
@@ -65,17 +68,23 @@ def find_item(hwnd, asset, label):
         except (OSError, ValueError):
             _asset_validity[path] = False
             log.warning('Missing/invalid menu image: %s; using OCR', asset)
-    box = legacy.safe_locate(path, crop, confidence=0.8) if _asset_validity[path] else None
+    monitor_scale = dpi_support.monitor_scale(hwnd)
+    # Reserve time for OCR when a template cannot match the current appearance.
+    image_deadline = min(deadline, time.monotonic() + max(0, (deadline - time.monotonic()) * 0.6))
+    box, scale = image_matcher.find(path, crop, confidence=0.8, deadline=image_deadline,
+                                  preferred=monitor_scale) if _asset_validity[path] else (None, monitor_scale)
     if box is None:
-        box = ocr_helpers.find_text_in_image(crop, label)
+        scale = monitor_scale
+        box = ocr_helpers.find_text_in_image(crop, label, deadline=deadline, source_scale=monitor_scale)
     if box is None:
         return None
-    return left + box.left + box.width / 2, top + box.top + box.height / 2
+    return image_matcher.Match(left + box.left + box.width / 2, top + box.top + box.height / 2, scale)
 
 
 def mouse(hwnd, point, action='click'):
     if win32gui.GetForegroundWindow() != hwnd:
         return False
+    control.bind_window(hwnd)
     legacy.verify_and_execute_mouse(*point, action=action)
     return True
 
@@ -104,6 +113,7 @@ def error_dialog():
 
 
 def open_monitoring(target, finder):
+    control.stage(target + ' 메뉴 여는 중')
     if not legacy.ensure_app_ready():
         fail('HI-TOPS initialization failed')
         return None
@@ -125,7 +135,7 @@ def open_monitoring(target, finder):
             return None
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            point = find_item(hwnd, 'mc_menu_item.png' if target == 'M&C' else 'rcc_icon.png', target)
+            point = find_item(hwnd, 'mc_menu_item.png' if target == 'M&C' else 'rcc_icon.png', target, deadline=deadline)
             if point:
                 if not mouse(hwnd, point):
                     return None
@@ -180,6 +190,7 @@ def native_schedule(hwnd):
         return False
     if command is None or win32gui.GetForegroundWindow() != hwnd:
         return False
+    control.guard()
     win32gui.PostMessage(hwnd, win32con.WM_COMMAND, command, 0)
     log.info('Berthing Schedule native command=%s', command)
     return True
@@ -199,10 +210,12 @@ def wait_schedule(hwnd):
 
 def run_mc():
     setup_logging()
+    control.stage('M&C 창 확인 중')
     _, hwnd = roi_helpers.get_mc_window_rect()
     hwnd = hwnd or open_monitoring('M&C', roi_helpers.get_mc_window_rect)
     if not hwnd or error_dialog() or not activate(hwnd):
         return fail('Cannot activate M&C')
+    control.stage('Berthing Schedule 여는 중')
     if native_schedule(hwnd):
         return wait_schedule(hwnd)
     for attempt in range(3):
@@ -212,7 +225,7 @@ def run_mc():
         pyautogui.hotkey('alt', 'v')
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline:
-            point = find_item(hwnd, 'berthing_schedule.png', 'Berthing Schedule')
+            point = find_item(hwnd, 'berthing_schedule.png', 'Berthing Schedule', deadline=deadline)
             if point:
                 if not mouse(hwnd, point):
                     return fail('M&C lost focus before selection')
@@ -224,6 +237,7 @@ def run_mc():
 
 def run_rcc():
     setup_logging()
+    control.stage('RCC 창 확인 중')
     _, hwnd = roi_helpers.get_rcc_window_rect()
     hwnd = hwnd or open_monitoring('RCC', roi_helpers.get_rcc_window_rect)
     if not hwnd or error_dialog() or not activate(hwnd):

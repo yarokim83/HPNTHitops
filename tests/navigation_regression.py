@@ -26,7 +26,7 @@ def functions(file, *names, **namespace):
 def nav(*names, **overrides):
     clock = itertools.count()
     base = dict(time=SimpleNamespace(monotonic=lambda: next(clock) / 2, sleep=Mock()),
-                log=Mock(), pyautogui=Mock(), setup_logging=Mock(), fail=Mock(return_value=False))
+                log=Mock(), pyautogui=Mock(), setup_logging=Mock(), fail=Mock(return_value=False), control=Mock(), image_matcher=SimpleNamespace(Match=lambda x,y,scale=1: (x,y)), dpi_support=SimpleNamespace(monitor_scale=lambda h: 1))
     base.update(overrides)
     return functions('navigation.py', *names, **base)
 
@@ -74,11 +74,12 @@ class NavigationTests(unittest.TestCase):
                   win32con=SimpleNamespace(SM_XVIRTUALSCREEN=76, SM_YVIRTUALSCREEN=77),
                   win32api=SimpleNamespace(GetSystemMetrics=lambda key: -1920 if key == 76 else 0),
                   ImageGrab=SimpleNamespace(grab=lambda **k: shot),
-                  legacy=SimpleNamespace(safe_locate=lambda *a, **k:
-                                         SimpleNamespace(left=100, top=20, width=40, height=20)),
+                  image_matcher=SimpleNamespace(find=lambda *a, **k: (
+                                         SimpleNamespace(left=100, top=20, width=40, height=20), 1),
+                                               Match=lambda x,y,scale: (x,y)),
                   os=os, __file__=str(ROOT / 'navigation.py'), _asset_validity={path: True})
         self.assertEqual(mod.find_item(1, 'test.png', 'test'), (-1480, 30))
-        shot.crop.assert_called_once_with((320, 0, 1520, 900))
+        shot.crop.assert_not_called()
 
     def test_activation_retry_must_recheck_foreground(self):
         api = Mock()
@@ -88,7 +89,7 @@ class NavigationTests(unittest.TestCase):
         fake_ctypes = Mock()
         fake_ctypes.windll.kernel32.GetCurrentThreadId.return_value = 10
         mod = functions('menu_navigator.py', 'force_activate_window',
-                        win32gui=api, win32con=Mock(), ctypes=fake_ctypes,
+                        win32gui=api, win32con=Mock(), ctypes=fake_ctypes, control=Mock(),
                         win32process=SimpleNamespace(GetWindowThreadProcessId=lambda h: (20, 30)),
                         time=SimpleNamespace(sleep=Mock()))
         self.assertFalse(mod.force_activate_window(1))
@@ -113,13 +114,13 @@ class NavigationTests(unittest.TestCase):
         for confirmed in (False, True):
             mod = nav('run_mc', roi_helpers=SimpleNamespace(get_mc_window_rect=lambda: (None, 1)),
                       error_dialog=lambda: None, activate=lambda h: True,
-                      native_schedule=lambda h: False, find_item=lambda *args: (40, 50),
+                      native_schedule=lambda h: False, find_item=lambda *args, **kwargs: (40, 50),
                       mouse=lambda *args: True, wait_schedule=lambda h: confirmed)
             self.assertEqual(mod.run_mc(), confirmed)
 
     def test_submenu_reenters_hover_after_first_timeout(self):
         calls = []
-        def find(hwnd, asset, label):
+        def find(hwnd, asset, label, **kwargs):
             if label == 'Monitoring':
                 calls.append(label)
                 return (10, 20)
@@ -138,7 +139,7 @@ class NavigationTests(unittest.TestCase):
                   roi_helpers=SimpleNamespace(get_hitops_window_rect=lambda: (None, 1)),
                   win32gui=SimpleNamespace(GetWindowRect=lambda h: (0, 0, 800, 600)),
                   error_dialog=lambda: None, activate=lambda h: True,
-                  find_item=lambda *a: (30, 40), mouse=mouse, wait_window=lambda finder: None)
+                  find_item=lambda *a, **k: (30, 40), mouse=mouse, wait_window=lambda finder: None)
         self.assertIsNone(mod.open_monitoring('M&C', Mock()))
         self.assertEqual(mouse.call_count, 2)  # one hover, one click
 
@@ -173,7 +174,7 @@ class NavigationTests(unittest.TestCase):
         api = Mock()
         api.position.return_value = (1000, 1000)
         mod = functions('menu_navigator.py', 'verify_and_execute_mouse',
-                        pyautogui=api, win32api=Mock(), time=SimpleNamespace(sleep=Mock()))
+                        pyautogui=api, win32api=Mock(), time=SimpleNamespace(sleep=Mock()), control=Mock())
         with self.assertRaises(RuntimeError):
             mod.verify_and_execute_mouse(10, 10)
         api.click.assert_not_called()
@@ -187,7 +188,7 @@ class OcrTests(unittest.TestCase):
         fake = SimpleNamespace(image_to_data=lambda *a, **k: data,
                                Output=SimpleNamespace(DICT='dict'))
         mod = functions('ocr_helpers.py', '_OcrBox', '_scan_for_matches',
-                        _preprocess_extreme=lambda *a, **k: ('image', 2))
+                        _preprocess_extreme=lambda *a, **k: ('image', 2), control=Mock())
         with patch.dict(sys.modules, pytesseract=fake):
             boxes = mod._scan_for_matches('shot', 'Berthing Schedule', 'full', False)
             self.assertEqual(len(boxes), 1)

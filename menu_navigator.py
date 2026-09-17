@@ -1,5 +1,7 @@
-import pyautogui
-import time
+import task_control as control
+time = control.Clock
+import pyautogui as _pyautogui
+pyautogui = control.Input(_pyautogui)
 import os
 import sys
 import subprocess
@@ -48,6 +50,7 @@ def verify_and_execute_mouse(log_x, log_y, action="click", jitter=0):
     if dist > 10:
         print(f"  [Position Verify] MISMATCH! OS reports ({actual_log_x}, {actual_log_y}). Retrying via Win32...")
         # win32api.SetCursorPos takes SCREEN coordinates (Logical)
+        control.guard()
         win32api.SetCursorPos((int(log_x), int(log_y)))
         time.sleep(0.1)
         actual_log_x, actual_log_y = pyautogui.position()
@@ -100,6 +103,7 @@ def force_activate_window(hwnd):
                 ctypes.windll.user32.AttachThreadInput(current_thread, thread_id, False)
         time.sleep(0.3)
         if win32gui.GetForegroundWindow() == hwnd:
+            control.bind_window(hwnd)
             return True
     return False
 
@@ -144,15 +148,19 @@ def save_password(new_password):
     except (OSError, ValueError) as e:
         print(f"[Config] Existing config unreadable, overwriting ({config_path}): {e}")
     config['password'] = new_password
+    import tempfile
+    handle, pending = tempfile.mkstemp(dir=os.path.dirname(config_path), suffix='.tmp')
     try:
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
-        print(f"[Config] Password saved to: {config_path}")
-    except OSError as e:
-        print(f"[Config] FAILED to save password ({config_path}): {e}")
-        raise
+        with os.fdopen(handle, 'w', encoding='utf-8') as stream:
+            json.dump(config, stream, ensure_ascii=False, indent=2)
+        os.replace(pending, config_path)
+    finally:
+        if os.path.exists(pending):
+            os.unlink(pending)
+
 
 def ensure_app_ready():
+    control.stage("HI-TOPS 실행·로그인 확인 중")
     """
     Common pre-processing: Launch → Login → Maximize → Foreground.
     Used by both run_mc_sequence() and main.py's run_automation().
@@ -1057,7 +1065,7 @@ def stop_popup_watchdog():
     popup_watchdog_active = False
 
 
-def click_pr_menu():
+def click_pr_menu(ready=False):
     """
     PR Automation Sequence (Linear Logic):
     1. Launch/Login/Maximize HI-TOPS
@@ -1068,7 +1076,7 @@ def click_pr_menu():
     print("Starting PR Automation Sequence (Linear)...")
     
     # Step 0: Common Launch/Login/Maximize
-    if not ensure_app_ready():
+    if not ready and not ensure_app_ready():
         print("App initialization failed. Aborting PR sequence.")
         return False
     
@@ -1098,18 +1106,10 @@ def click_pr_menu():
     
     print(f"Clicking Maintenance Tile at {loc_tile}...")
     
-    # Debug Proof for Tile Click
-    try:
-        screenshot = ImageGrab.grab(all_screens=True)
-        draw_crosshair(screenshot, loc_tile[0], loc_tile[1], label="Maintenance Tile")
-        debug_path = os.path.join(assets_dir, 'debug_tile_click.png')
-        screenshot.save(debug_path)
-    except: pass
-
     # Use verify_and_execute_mouse for click
     if not mouse(hitops_hwnd, loc_tile):
         return False
-    time.sleep(2.5) # Wait for window to open
+    control.stage("Maintenance 창 기다리는 중")
     
     # Step 2: Wait for Maintenance & Repair System Window
     print("Waiting for Maintenance & Repair System Window...")
@@ -1151,12 +1151,6 @@ def click_pr_menu():
     
     if loc_inventory:
         print(f"Clicking Inventory Menu at {loc_inventory}...")
-        # Debug proof (best-effort; silently skipped on any error)
-        try:
-            screenshot.save(os.path.join(assets_dir, 'debug_inventory_click.png'))
-        except Exception:
-            pass
-
         if not mouse(main_hwnd, loc_inventory):
             return False
         time.sleep(1.0)
@@ -1181,18 +1175,9 @@ def click_pr_menu():
             return True
         else:
             print("Purchase Request item not found (dropdown didn't open?)")
-            # Save failure screenshot
-            try:
-                fail_shot = ImageGrab.grab(all_screens=True)
-                fail_shot.save(os.path.join(assets_dir, 'debug_pr_fail.png'))
-            except: pass
             return False
 
     print("Inventory menu not found in window.")
-    # Save failure screenshot
-    try:
-        screenshot.save(os.path.join(assets_dir, 'debug_pr_fail.png'))
-    except: pass
     return False
 
 def smart_navigate_to_pr():

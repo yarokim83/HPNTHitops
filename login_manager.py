@@ -1,10 +1,11 @@
-import pyautogui
-import time
+import task_control as control
+time = control.Clock
+import pyautogui as _pyautogui
+pyautogui = control.Input(_pyautogui)
 import pyperclip
 import win32gui
 import win32con
 import roi_helpers
-import pyautogui
 
 # Global configuration
 pyautogui.FAILSAFE = True
@@ -87,12 +88,14 @@ def perform_login(password):
             win32gui.SetForegroundWindow(hwnd)
         except Exception as e:
             print(f"Window activation warning: {e}")
-            pyautogui.press('alt') # Wake up
+            return False
         
         time.sleep(0.1)
 
         if win32gui.GetForegroundWindow() != hwnd:
             return False
+
+        control.bind_window(hwnd)
 
         # 2. Click Center to Ensure Focus
         # Refresh rect after restore to get actual coordinates

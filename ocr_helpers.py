@@ -4,6 +4,9 @@ Enhanced preprocessing for maximum accuracy.
 """
 from PIL import Image, ImageEnhance, ImageOps, ImageFilter
 import os
+import time
+import threading
+import task_control as control
 
 try:
     import numpy as np
@@ -13,8 +16,10 @@ except Exception:
 
 # Global Tesseract configuration
 _tesseract_available = False
+_tesseract_checked = False
+_init_lock = threading.Lock()
 
-def init_tesseract():
+def _detect_tesseract():
     """
     Initialize Tesseract configuration.
     """
@@ -50,6 +55,15 @@ def init_tesseract():
     
     print("WARNING: Tesseract OCR not available!")
     return False
+
+def init_tesseract():
+    global _tesseract_checked
+    with _init_lock:
+        if not _tesseract_checked:
+            _detect_tesseract()
+            _tesseract_checked = True
+    return _tesseract_available
+
 
 # Alias for compatibility
 init_ocr = init_tesseract
@@ -136,17 +150,18 @@ class _OcrBox:
         self.confidence = conf
         self.text = text
 
-def _scan_for_matches(screenshot, target_text, region, invert):
+def _scan_for_matches(screenshot, target_text, region, invert, timeout=5):
     """Run a single OCR pass and return all matches as _OcrBox list."""
     import pytesseract
 
+    control.checkpoint()
     target_type = "header" if region == "header" else "text"
     processed, scale = _preprocess_extreme(screenshot, target=target_type, invert=invert)
 
     # --psm 11: Sparse text (menus). --oem 1: LSTM mode.
     config = '--psm 11 --oem 1'
     data = pytesseract.image_to_data(processed, output_type=pytesseract.Output.DICT,
-                                     config=config, timeout=5)
+                                     config=config, timeout=timeout)
 
     matches = []
     target_lower = ' '.join(target_text.lower().split())
@@ -185,7 +200,7 @@ def _scan_for_matches(screenshot, target_text, region, invert):
 
     return matches
 
-def find_text_in_image(screenshot, target_text, region="full"):
+def find_text_in_image(screenshot, target_text, region="full", deadline=None, source_scale=1):
     """
     Find text using optimized Tesseract OCR.
     Runs a normal pass and (if needed) an inverted pass for dark-theme UIs,
@@ -201,6 +216,11 @@ def find_text_in_image(screenshot, target_text, region="full"):
             return None
 
     try:
+        source_scale = max(0.5, min(3, float(source_scale)))
+        if source_scale != 1:
+            screenshot = screenshot.resize((max(1, round(screenshot.width / source_scale)),
+                                            max(1, round(screenshot.height / source_scale))),
+                                           Image.Resampling.LANCZOS)
         if region == "top":
             w, h = screenshot.size
             screenshot = screenshot.crop((0, 0, w, min(150, h)))
@@ -208,16 +228,28 @@ def find_text_in_image(screenshot, target_text, region="full"):
             w, h = screenshot.size
             screenshot = screenshot.crop((0, 0, w, min(100, h)))
 
-        all_matches = _scan_for_matches(screenshot, target_text, region, invert=False)
-        # Inverted pass: helps dark themes / light-on-dark text.
-        if not all_matches:
-            all_matches = _scan_for_matches(screenshot, target_text, region, invert=True)
+        deadline = deadline if deadline is not None else time.monotonic() + 3
+        all_matches = []
+        for invert in (False, True):
+            control.checkpoint()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.05:
+                break
+            all_matches = _scan_for_matches(screenshot, target_text, region, invert,
+                                             timeout=min(1.5, remaining))
+            if all_matches:
+                break
 
         if not all_matches:
             return None
 
         # Pick the highest-confidence match.
         best = max(all_matches, key=lambda b: b.confidence)
+        if source_scale != 1:
+            best.left = round(best.left * source_scale)
+            best.top = round(best.top * source_scale)
+            best.width = round(best.width * source_scale)
+            best.height = round(best.height * source_scale)
         print(f"OCR found '{best.text}' (conf: {best.confidence}%) at ({best.left}, {best.top})")
         return best
 
