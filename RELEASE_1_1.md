@@ -71,3 +71,14 @@ checks layout at the current DPI, validation, focus protection, busy state and
 cancellation recovery. Read-only checks confirmed the actual separate PR window and
 that the installed WindowsForms date controls support bounded text readback.
 No end-to-end PR creation was performed as part of these checks.
+
+## 1.1.1 follow-up
+
+- Wait for the owned Purchase Requisition Detail window before Description entry;
+  the list's Description filter no longer qualifies as editor readiness.
+- Log cancellation/focus-loss reasons to distinguish stopped tasks from failures.
+- Open Berthing Schedule with Alt+V, Home, nine Down keys, then Enter, matching
+  the supplied Vessel menu. Each key retains focus/cancellation protection.
+  Confirm the resulting window without repeating selection on timeout.
+  This assumes the supplied menu order; image/OCR matching is no longer used for
+  this step. Existing open schedules are reused.

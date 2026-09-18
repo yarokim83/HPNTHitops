@@ -102,21 +102,32 @@ class NavigationTests(unittest.TestCase):
         mod.pyautogui.hotkey.assert_not_called()
         mod.pyautogui.press.assert_not_called()
 
-    def test_missing_menu_retries_without_down_or_enter(self):
-        mod = nav('run_mc', roi_helpers=SimpleNamespace(get_mc_window_rect=lambda: (None, 1)),
-                  error_dialog=lambda: None, activate=lambda h: True,
-                  native_schedule=lambda h: False, find_item=Mock(return_value=None))
-        self.assertFalse(mod.run_mc())
-        self.assertEqual(mod.pyautogui.hotkey.call_count, 3)
-        self.assertEqual([c.args for c in mod.pyautogui.press.call_args_list], [('esc',)] * 3)
-
-    def test_success_requires_schedule_confirmation(self):
+    def test_keyboard_selects_tenth_item_and_confirms_result(self):
         for confirmed in (False, True):
             mod = nav('run_mc', roi_helpers=SimpleNamespace(get_mc_window_rect=lambda: (None, 1)),
                       error_dialog=lambda: None, activate=lambda h: True,
-                      native_schedule=lambda h: False, find_item=lambda *args, **kwargs: (40, 50),
-                      mouse=lambda *args: True, wait_schedule=lambda h: confirmed)
+                      schedule_visible=lambda h: False,
+                      wait_schedule=Mock(return_value=confirmed))
             self.assertEqual(mod.run_mc(), confirmed)
+            mod.pyautogui.hotkey.assert_called_once_with('alt', 'v')
+            self.assertEqual([c.args for c in mod.pyautogui.press.call_args_list],
+                             [('esc',), ('home',)] + [('down',)] * 9 + [('enter',)])
+            mod.wait_schedule.assert_called_once_with(1)
+
+    def test_existing_schedule_is_not_opened_again(self):
+        mod = nav('run_mc', roi_helpers=SimpleNamespace(get_mc_window_rect=lambda: (None, 1)),
+                  error_dialog=lambda: None, activate=lambda h: True,
+                  schedule_visible=lambda h: True)
+        self.assertTrue(mod.run_mc())
+        mod.pyautogui.press.assert_not_called()
+        mod.pyautogui.hotkey.assert_not_called()
+
+    def test_error_before_enter_prevents_selection(self):
+        mod = nav('run_mc', roi_helpers=SimpleNamespace(get_mc_window_rect=lambda: (None, 1)),
+                  error_dialog=Mock(side_effect=[None, 42]), activate=lambda h: True,
+                  schedule_visible=lambda h: False)
+        self.assertFalse(mod.run_mc())
+        self.assertNotIn(('enter',), [c.args for c in mod.pyautogui.press.call_args_list])
 
     def test_submenu_reenters_hover_after_first_timeout(self):
         calls = []

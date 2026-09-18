@@ -138,17 +138,27 @@ def fill(hwnd, description, unit_price, account, part):
 
 
 def editor_window(previous):
-    """Follow a PR editor opened by Add, including an owned top-level dialog."""
+    """Wait for the actual Detail window, never the list's Description filter.
+
+    Add opens an owned WinForms window asynchronously. The list also contains a
+    Description field, so matching that image before the new window appears can
+    bind the list and immediately trip the foreground guard when Detail opens.
+    """
     deadline = control.Clock.monotonic() + 8
     while control.Clock.monotonic() < deadline:
         control.checkpoint()
         foreground = win32gui.GetForegroundWindow()
-        _, pr_root = roi_helpers.get_pr_window_rect()
-        owned = win32gui.GetWindow(foreground, 4) == previous if foreground else False
-        known = foreground in (previous, pr_root) or owned
-        if known and foreground in [h for h, _, _ in roi_helpers.application_windows()]:
-            control.bind_window(foreground)
-            if navigation.find_item(foreground, 'description_field.png', 'Description', deadline=deadline):
-                return foreground
+        for hwnd, title, _ in roi_helpers.application_windows():
+            name = title.casefold()
+            detail = ('purchase requisition' in name or 'purchase request' in name) and 'detail' in name
+            if not detail or hwnd == previous or not win32gui.IsWindowEnabled(hwnd):
+                continue
+            # The new editor must belong to this list, not a different PR session.
+            if win32gui.GetWindow(hwnd, 4) != previous:
+                continue
+            if foreground == hwnd and win32gui.GetForegroundWindow() == hwnd:
+                control.bind_window(hwnd)
+                navigation.log.info('PR Detail ready hwnd=%s owner=%s', hwnd, previous)
+                return hwnd
         control.sleep(0.15)
     raise RuntimeError('새 PR 입력 창을 확인하지 못했습니다. 기존 PR 내용부터 확인해 주세요.')

@@ -45,7 +45,9 @@ def guard():
     hwnd = getattr(_local, 'hwnd', None)
     if hwnd:
         import win32gui
-        if win32gui.GetForegroundWindow() != hwnd:
+        foreground = win32gui.GetForegroundWindow()
+        if foreground != hwnd:
+            logging.getLogger('PRMaker').warning('Input focus changed expected=%s actual=%s', hwnd, foreground)
             raise TaskStopped('대상 창의 포커스가 바뀌어 중지했습니다. 이미 입력된 내용을 확인해 주세요.')
 
 

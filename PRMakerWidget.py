@@ -257,6 +257,7 @@ class PRMakerWidget(ctk.CTk):
                         detail = 'PR 입력값 확인 완료 · HI-TOPS에서 검토·저장해 주세요.' if name == 'PR' else name + ' 완료'
             except control.TaskStopped as exc:
                 outcome, detail = 'stopped', str(exc)
+                navigation.log.warning('%s stopped: %s', name, detail)
             except Exception as exc:
                 detail = str(exc)
                 navigation.log.exception('%s failed', name)

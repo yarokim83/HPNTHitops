@@ -12,6 +12,35 @@ from navigation_regression import functions, nav
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_editor_waits_past_list_description_for_owned_detail(self):
+        ticks = itertools.count()
+        ctrl = SimpleNamespace(Clock=SimpleNamespace(monotonic=lambda: next(ticks) / 2),
+                               checkpoint=Mock(), sleep=Mock(), bind_window=Mock())
+        api = Mock()
+        api.GetForegroundWindow.side_effect = [1, 2, 2]
+        api.GetWindow.return_value = 1
+        api.IsWindowEnabled.return_value = True
+        mod = functions('pr_form.py', 'editor_window', control=ctrl, win32gui=api,
+                        navigation=Mock(), roi_helpers=SimpleNamespace(application_windows=lambda:
+                            [(1, 'MNR035 Purchase Requisition List', ''),
+                             (2, 'MNR035 Purchase Requisition Detail', '')]))
+        self.assertEqual(mod.editor_window(1), 2)
+        ctrl.bind_window.assert_called_once_with(2)
+        self.assertEqual(ctrl.sleep.call_count, 1)
+
+    def test_list_description_never_counts_as_ready_editor(self):
+        ticks = itertools.count()
+        ctrl = SimpleNamespace(Clock=SimpleNamespace(monotonic=lambda: next(ticks)),
+                               checkpoint=Mock(), sleep=Mock(), bind_window=Mock())
+        api = Mock()
+        api.GetForegroundWindow.return_value = 1
+        mod = functions('pr_form.py', 'editor_window', control=ctrl, win32gui=api,
+                        navigation=Mock(), roi_helpers=SimpleNamespace(application_windows=lambda:
+                            [(1, 'MNR035 Purchase Requisition List', '')]))
+        with self.assertRaises(RuntimeError):
+            mod.editor_window(1)
+        ctrl.bind_window.assert_not_called()
+
     def test_monitor_clamp_handles_left_monitor_and_top_edge(self):
         mod = functions('window_position.py', 'clamp')
         self.assertEqual(mod.clamp(-2000, -300, 400, 200, (-1920, 0, 0, 1080)), (-1920, 0))

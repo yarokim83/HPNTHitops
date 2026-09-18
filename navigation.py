@@ -216,23 +216,24 @@ def run_mc():
     if not hwnd or error_dialog() or not activate(hwnd):
         return fail('Cannot activate M&C')
     control.stage('Berthing Schedule 여는 중')
-    if native_schedule(hwnd):
-        return wait_schedule(hwnd)
-    for attempt in range(3):
-        if not activate(hwnd):
-            return fail('M&C lost focus')
-        pyautogui.press('esc')
-        pyautogui.hotkey('alt', 'v')
-        deadline = time.monotonic() + 4
-        while time.monotonic() < deadline:
-            point = find_item(hwnd, 'berthing_schedule.png', 'Berthing Schedule', deadline=deadline)
-            if point:
-                if not mouse(hwnd, point):
-                    return fail('M&C lost focus before selection')
-                return wait_schedule(hwnd)
-            time.sleep(0.3)
-        log.warning('Vessel menu/item not found; retry=%d', attempt + 1)
-    return fail('Berthing Schedule menu item not found')
+    if schedule_visible(hwnd):
+        return True
+    # Vessel menu order verified against the user's HI-TOPS menu (18 items).
+    # Home resets selection even if a previous run left this menu open.
+    # Each individual key is focus/cancellation guarded by control.Input.
+    pyautogui.press('esc')
+    pyautogui.hotkey('alt', 'v')
+    time.sleep(0.4)
+    pyautogui.press('home')
+    for _ in range(9):
+        pyautogui.press('down')
+        time.sleep(0.08)
+    if error_dialog():
+        return fail('Berthing Schedule blocked before keyboard selection')
+    pyautogui.press('enter')
+    log.info('Berthing Schedule keyboard selection: Alt+V, Home, Down x9, Enter')
+    # Do not repeat Enter after a slow response: confirm the opened window.
+    return wait_schedule(hwnd)
 
 
 def run_rcc():
