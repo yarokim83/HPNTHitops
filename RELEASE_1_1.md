@@ -82,3 +82,10 @@ No end-to-end PR creation was performed as part of these checks.
   Confirm the resulting window without repeating selection on timeout.
   This assumes the supplied menu order; image/OCR matching is no longer used for
   this step. Existing open schedules are reused.
+
+## 1.1.2 follow-up
+
+- Reuse and activate an existing Maintenance & Repair window before searching
+  Inventory; do not return to the HI-TOPS tile when M&R is already running.
+- When M&R is absent, explicitly activate HI-TOPS before searching/clicking its
+  tile. Record each menu stage and activation failure in the persistent log.

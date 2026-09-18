@@ -80,7 +80,10 @@ def force_activate_window(hwnd):
     """Verify foreground ownership; retry using the calling thread's input queue."""
     if not hwnd or not win32gui.IsWindow(hwnd):
         return False
+    import logging
+    logger = logging.getLogger("PRMaker")
     for attempt in range(2):
+        control.checkpoint()
         attached = []
         current_thread = ctypes.windll.kernel32.GetCurrentThreadId()
         try:
@@ -97,14 +100,16 @@ def force_activate_window(hwnd):
             win32gui.BringWindowToTop(hwnd)
             win32gui.SetForegroundWindow(hwnd)
         except Exception as exc:
-            print(f"Activation attempt {attempt + 1} failed: {exc}")
+            logger.warning("Activation attempt=%s hwnd=%s failed: %s", attempt + 1, hwnd, exc)
         finally:
             for thread_id in reversed(attached):
                 ctypes.windll.user32.AttachThreadInput(current_thread, thread_id, False)
         time.sleep(0.3)
         if win32gui.GetForegroundWindow() == hwnd:
             control.bind_window(hwnd)
+            logger.info("Window activated hwnd=%s attempt=%s", hwnd, attempt + 1)
             return True
+    logger.error("Window activation failed hwnd=%s foreground=%s", hwnd, win32gui.GetForegroundWindow())
     return False
 
 
@@ -1066,119 +1071,61 @@ def stop_popup_watchdog():
 
 
 def click_pr_menu(ready=False):
-    """
-    PR Automation Sequence (Linear Logic):
-    1. Launch/Login/Maximize HI-TOPS
-    2. Click 'Maintenance & Repair' Tile
-    3. Click 'Purchase Request' (in submenu)
-    Uses verify_and_execute_mouse for robust physical execution.
-    """
-    print("Starting PR Automation Sequence (Linear)...")
-    
-    # Step 0: Common Launch/Login/Maximize
-    if not ready and not ensure_app_ready():
-        print("App initialization failed. Aborting PR sequence.")
-        return False
-    
-    from navigation import find_item, mouse
-    assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
-    
-    # Step 1: Find and Click Maintenance & Repair Tile
-    print("Searching for Maintenance & Repair Tile...")
-    repair_icon_img = os.path.join(assets_dir, 'repair_icon.png')
-    
-    # Get Hitops window bounds to filter OCR (avoid false positives from other monitors)
-    hitops_rect, hitops_hwnd = roi_helpers.get_hitops_window_rect()
-    hitops_x_max = hitops_rect[2] if hitops_rect else 1600  # right edge of Hitops window (logical)
-    
-    loc_tile = None
-    for i in range(10):
-        loc_tile = find_item(hitops_hwnd, 'repair_icon.png', 'Maintenance')
-
-        if loc_tile:
-            break
-        time.sleep(1)
-        print(f"Searching for Maintenance Tile... ({i+1}/10)")
-    
-    if not loc_tile:
-        print("Maintenance & Repair tile not found.")
-        return False
-    
-    print(f"Clicking Maintenance Tile at {loc_tile}...")
-    
-    # Use verify_and_execute_mouse for click
-    if not mouse(hitops_hwnd, loc_tile):
-        return False
-    control.stage("Maintenance 창 기다리는 중")
-    
-    # Step 2: Wait for Maintenance & Repair System Window
-    print("Waiting for Maintenance & Repair System Window...")
-    main_rect = None
-    main_hwnd = None
-    for k in range(20):
-        main_rect, main_hwnd = roi_helpers.get_maintenance_window_rect()
-        if main_rect:
-            print(f"Maintenance Window Detected: {main_rect}")
-            break
-        time.sleep(1.0)
-        print(f"Waiting for Maintenance Window... ({k+1}/20)")
-        
-    if not main_rect:
-        print("Maintenance & Repair System window did not appear.")
-        return False
-        
-    # Ensure window is active/maximized
-    try:
-        win32gui.ShowWindow(main_hwnd, win32con.SW_MAXIMIZE)
-        if not force_activate_window(main_hwnd):
-            return False
-        time.sleep(1.0)
-    except Exception:
-        return False
-
-    # Step 3: Find 'Inventory' Menu in the New Window (with retry)
-    print("Searching for 'Inventory' in Maintenance Window...")
-    
-    inventory_img = os.path.join(assets_dir, 'inventory_menu.png')
-    loc_inventory = None
-    
-    for _ in range(5):
-        loc_inventory = find_item(main_hwnd, 'inventory_menu.png', 'Inventory')
-        if loc_inventory:
-            print(f"Found 'Inventory' via image search at {loc_inventory}")
-            break
-        time.sleep(1.0)
-    
-    if loc_inventory:
-        print(f"Clicking Inventory Menu at {loc_inventory}...")
-        if not mouse(main_hwnd, loc_inventory):
-            return False
-        time.sleep(1.0)
-
-        # Step 4: Click Purchase Request
-        pr_goal_img = os.path.join(assets_dir, 'purchase_request_menu.png')
-
-        print("Searching for Purchase Request menu item...")
-        loc_pr = None
-        for j in range(5):
-            loc_pr = find_item(main_hwnd, 'purchase_request_menu.png', 'Purchase Request')
-            if loc_pr:
+    """Reuse M&R first; launch it from an activated HI-TOPS only if absent."""
+    import navigation
+    _, main_hwnd = roi_helpers.get_maintenance_window_rect()
+    if main_hwnd:
+        navigation.log.info('PR reusing Maintenance window hwnd=%s', main_hwnd)
+    else:
+        if not ready and not ensure_app_ready():
+            return navigation.fail('PR: HI-TOPS initialization failed')
+        _, hitops_hwnd = roi_helpers.get_hitops_window_rect()
+        control.stage('HI-TOPS 메인 창 활성화 중')
+        if not navigation.activate(hitops_hwnd):
+            return navigation.fail('PR: cannot activate HI-TOPS before M&R tile')
+        control.stage('Maintenance & Repair 메뉴 여는 중')
+        deadline = time.monotonic() + 12
+        loc_tile = None
+        while time.monotonic() < deadline:
+            control.guard()
+            loc_tile = navigation.find_item(hitops_hwnd, 'repair_icon.png', 'Maintenance', deadline=deadline)
+            if loc_tile:
                 break
-            time.sleep(0.5)
-            print(f"Searching for PR item... ({j+1}/5)")
+            time.sleep(0.3)
+        if not loc_tile:
+            return navigation.fail('PR: Maintenance tile not found')
+        if not navigation.mouse(hitops_hwnd, loc_tile):
+            return navigation.fail('PR: focus lost before Maintenance tile click')
+        control.stage('Maintenance 창 기다리는 중')
+        main_hwnd = navigation.wait_window(roi_helpers.get_maintenance_window_rect)
+        if not main_hwnd:
+            return navigation.fail('PR: Maintenance window did not appear')
 
-        if loc_pr:
-            print(f"Clicking Purchase Request at {loc_pr}...")
-            if not mouse(main_hwnd, loc_pr):
-                return False
-            print("Purchase Request clicked.")
-            return True
-        else:
-            print("Purchase Request item not found (dropdown didn't open?)")
-            return False
+    control.stage('Maintenance 창 복원·활성화 중')
+    if not win32gui.IsWindowEnabled(main_hwnd):
+        return navigation.fail('PR: Maintenance disabled by an open dialog')
+    if not navigation.activate(main_hwnd):
+        return navigation.fail('PR: cannot activate Maintenance window')
+    for asset, label, stage in (
+        ('inventory_menu.png', 'Inventory', 'Inventory 메뉴 여는 중'),
+        ('purchase_request_menu.png', 'Purchase Request', 'Purchase Request 항목 여는 중'),
+    ):
+        control.stage(stage)
+        deadline = time.monotonic() + 10
+        point = None
+        while time.monotonic() < deadline:
+            control.guard()
+            point = navigation.find_item(main_hwnd, asset, label, deadline=deadline)
+            if point:
+                break
+            time.sleep(0.3)
+        if not point:
+            return navigation.fail('PR: menu item not found: ' + label)
+        if not navigation.mouse(main_hwnd, point):
+            return navigation.fail('PR: focus lost before clicking ' + label)
+        time.sleep(0.4)
+    return True
 
-    print("Inventory menu not found in window.")
-    return False
 
 def smart_navigate_to_pr():
     """

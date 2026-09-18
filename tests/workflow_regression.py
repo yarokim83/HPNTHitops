@@ -12,6 +12,49 @@ from navigation_regression import functions, nav
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_existing_maintenance_skips_main_and_tile(self):
+        navigation = Mock()
+        navigation.activate.return_value = True
+        navigation.mouse.return_value = True
+        navigation.find_item.return_value = (10, 20)
+        mod = functions('menu_navigator.py', 'click_pr_menu', control=Mock(),
+                        roi_helpers=SimpleNamespace(get_maintenance_window_rect=lambda: (None, 7)),
+                        win32gui=Mock(), ensure_app_ready=Mock(),
+                        time=SimpleNamespace(monotonic=lambda: 0, sleep=Mock()))
+        with patch.dict(sys.modules, navigation=navigation):
+            self.assertTrue(mod.click_pr_menu())
+        mod.ensure_app_ready.assert_not_called()
+        navigation.activate.assert_called_once_with(7)
+        self.assertEqual([c.args[2] for c in navigation.find_item.call_args_list],
+                         ['Inventory', 'Purchase Request'])
+
+    def test_existing_maintenance_activation_failure_sends_no_input(self):
+        navigation = Mock()
+        navigation.activate.return_value = False
+        navigation.fail.return_value = False
+        mod = functions('menu_navigator.py', 'click_pr_menu', control=Mock(),
+                        roi_helpers=SimpleNamespace(get_maintenance_window_rect=lambda: (None, 7)),
+                        win32gui=Mock(), ensure_app_ready=Mock())
+        with patch.dict(sys.modules, navigation=navigation):
+            self.assertFalse(mod.click_pr_menu())
+        navigation.find_item.assert_not_called()
+        navigation.mouse.assert_not_called()
+        mod.ensure_app_ready.assert_not_called()
+
+    def test_main_activation_required_before_tile_search(self):
+        navigation = Mock()
+        navigation.activate.return_value = False
+        navigation.fail.return_value = False
+        mod = functions('menu_navigator.py', 'click_pr_menu', control=Mock(),
+                        roi_helpers=SimpleNamespace(get_maintenance_window_rect=lambda: (None, None),
+                                                    get_hitops_window_rect=lambda: (None, 1)),
+                        ensure_app_ready=Mock(return_value=True))
+        with patch.dict(sys.modules, navigation=navigation):
+            self.assertFalse(mod.click_pr_menu())
+        navigation.activate.assert_called_once_with(1)
+        navigation.find_item.assert_not_called()
+        navigation.mouse.assert_not_called()
+
     def test_editor_waits_past_list_description_for_owned_detail(self):
         ticks = itertools.count()
         ctrl = SimpleNamespace(Clock=SimpleNamespace(monotonic=lambda: next(ticks) / 2),

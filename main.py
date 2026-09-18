@@ -19,14 +19,15 @@ def run_automation(pr_description, is_unit_price, account_code, part_no=None):
     import navigation
     description, part = pr_description.strip(), (part_no or '').strip()
     pr_form.validate(description, account_code, part)
-    if not menu_navigator.ensure_app_ready():
-        return False
     control.stage('Purchase Request 메뉴 여는 중')
-    if not menu_navigator.click_pr_menu(ready=True):
+    if not menu_navigator.click_pr_menu():
         return False
+    control.stage("PR 목록 창 기다리는 중")
     hwnd = navigation.wait_window(roi_helpers.get_pr_window_rect)
-    if not hwnd or not menu_navigator.force_activate_window(hwnd):
-        return False
+    if not hwnd:
+        return navigation.fail("PR: list window did not appear")
+    if not menu_navigator.force_activate_window(hwnd):
+        return navigation.fail("PR: cannot activate list window")
     return pr_form.fill(hwnd, description, is_unit_price, account_code, part)
 
 
