@@ -89,3 +89,12 @@ No end-to-end PR creation was performed as part of these checks.
   Inventory; do not return to the HI-TOPS tile when M&R is already running.
 - When M&R is absent, explicitly activate HI-TOPS before searching/clicking its
   tile. Record each menu stage and activation failure in the persistent log.
+
+## 1.1.3 follow-up
+
+- Match PR Add only within the first client toolbar row, using colour plus
+  template similarity and a green-pixel check; select the best scale match.
+- Remove the whole-window/OCR Add fallback. Reject an obscured target and log
+  the verified point, confidence, dispatched click, and Detail wait failure.
+- Regression fixture contains only the user-supplied toolbar icons; verify
+  100–300% scales and rejection of minus/grey icons. No automatic second click.

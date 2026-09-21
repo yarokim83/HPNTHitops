@@ -126,7 +126,7 @@ class WorkflowTests(unittest.TestCase):
         api.GetForegroundWindow.return_value = 99
         api.GetWindow.return_value = 0
         mod = functions('pr_form.py', 'editor_window', control=ctrl, win32gui=api,
-                        roi_helpers=SimpleNamespace(get_pr_window_rect=lambda: (None, 1),
+                        navigation=Mock(), roi_helpers=SimpleNamespace(get_pr_window_rect=lambda: (None, 1),
                                                     application_windows=lambda: [(1, 'PR', '')]))
         with self.assertRaises(RuntimeError):
             mod.editor_window(1)
@@ -171,7 +171,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_field_verification_failure_stops_following_fields(self):
         field = Mock(side_effect=RuntimeError('cannot verify Description'))
-        mod = functions('pr_form.py', 'fill', control=Mock(), point=Mock(), click=Mock(), text_field=field, editor_window=lambda h: h)
+        mod = functions('pr_form.py', 'fill', control=Mock(), click_add=Mock(), point=Mock(), click=Mock(), text_field=field, editor_window=lambda h: h)
         with self.assertRaisesRegex(RuntimeError, 'Description'):
             mod.fill(1, 'desc', False, 'known', '')
         self.assertEqual(field.call_count, 1)

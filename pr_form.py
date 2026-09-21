@@ -108,10 +108,21 @@ def text_field(hwnd, asset, label, value, offset, kind='text'):
     verify(hwnd, value, label, kind)
 
 
+def click_add(hwnd):
+    import pr_add_button
+    target, score, scale = pr_add_button.locate(hwnd)
+    navigation.log.info('PR Add verified toolbar plus hwnd=%s point=%s score=%.3f scale=%.3f', hwnd, target, score, scale)
+    hit = win32gui.WindowFromPoint(tuple(round(v) for v in target))
+    if hit != hwnd and not win32gui.IsChild(hwnd, hit):
+        raise RuntimeError('다른 창이 + 버튼을 가리고 있어 클릭을 중단했습니다.')
+    click(hwnd, target)
+    navigation.log.info('PR Add click dispatched; waiting for Detail')
+
+
 def fill(hwnd, description, unit_price, account, part):
     control.bind_window(hwnd)
     control.stage('새 PR 양식 여는 중')
-    click(hwnd, point(hwnd, 'add_btn.png', 'Add'))
+    click_add(hwnd)
     hwnd = editor_window(hwnd)
     text_field(hwnd, 'description_field.png', 'Description', description, 100)
     date = (datetime.now() + relativedelta(months=1)).strftime('%Y-%m-%d')
@@ -161,4 +172,5 @@ def editor_window(previous):
                 navigation.log.info('PR Detail ready hwnd=%s owner=%s', hwnd, previous)
                 return hwnd
         control.sleep(0.15)
+    navigation.fail('PR Add clicked but owned foreground Detail was not confirmed')
     raise RuntimeError('새 PR 입력 창을 확인하지 못했습니다. 기존 PR 내용부터 확인해 주세요.')
