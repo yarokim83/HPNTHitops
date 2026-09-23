@@ -98,3 +98,11 @@ No end-to-end PR creation was performed as part of these checks.
   the verified point, confidence, dispatched click, and Detail wait failure.
 - Regression fixture contains only the user-supplied toolbar icons; verify
   100–300% scales and rejection of minus/grey icons. No automatic second click.
+
+## 1.1.4 follow-up
+
+- Retry login-window activation with the shared foreground helper, then allow
+  the main window to appear for up to 30 seconds without resubmitting credentials.
+- Scan all HI-TOPS windows so a lingering login window cannot hide the ready main
+  window; use that verified main handle for maximizing and Monitoring navigation.
+- Persist login activation, submission and wait-timeout diagnostics without credentials.

@@ -189,7 +189,8 @@ def ensure_app_ready():
     # Step 2: Login
     print("Performing Login...")
     if not login_manager.perform_login(password):
-        print("Login failed or timed out.")
+        import logging
+        logging.getLogger("PRMaker").error("HI-TOPS login readiness failed")
         return False
     print("Login successful.")
     
@@ -207,7 +208,7 @@ def click_rcc_menu():
 
 
 def ensure_hitops_maximized():
-    _, hwnd = roi_helpers.get_hitops_window_rect()
+    hwnd = login_manager.main_window()
     if not hwnd:
         return False
     try:

@@ -35,119 +35,99 @@ def is_login(hwnd):
     return bool(fields)
 
 
+def main_window():
+    """Inspect every candidate; a lingering Login window must not hide main."""
+    for hwnd, title, _ in roi_helpers.application_windows():
+        name = title.casefold()
+        if ('hitops' not in name and 'hi-tops' not in name) or 'login' in name:
+            continue
+        try:
+            if (win32gui.GetClassName(hwnd) != '#32770'
+                    and win32gui.IsWindowEnabled(hwnd) and not is_login(hwnd)):
+                return hwnd
+        except Exception:
+            continue  # A login window may disappear while enumerating.
+    return None
+
+
+def wait_main(timeout=30):
+    import logging
+    log = logging.getLogger('PRMaker')
+    control.stage('로그인 후 HI-TOPS 메인 창 기다리는 중')
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        control.checkpoint()
+        hwnd = main_window()
+        if hwnd:
+            log.info('Login main window ready hwnd=%s', hwnd)
+            return True
+        time.sleep(0.3)
+    log.error('Login main wait timed out; foreground=%s windows=%s',
+              win32gui.GetForegroundWindow(), roi_helpers.application_windows())
+    return False
+
+
 def perform_login(password):
-    """
-    Automates the login process by focusing the window, clicking center, and typing password.
-    Uses Process ID (via roi_helpers) to find window reliably.
-    """
-    print("Waiting for application to load (Searching for 30 seconds)...")
-    
+    import logging
+    from menu_navigator import force_activate_window
+    log = logging.getLogger('PRMaker')
+    deadline = time.monotonic() + 30
     hwnd = None
-    title = None
-    is_login_window = False
-    target_rect = None
-
-    # Retry loop for 30 seconds
-    for i in range(30):
-        # 1. Try Process-based Detection (Most Reliable)
-        try:
-            rect, p_hwnd = roi_helpers.get_hitops_window_rect()
-            if p_hwnd:
-                hwnd = p_hwnd
-                target_rect = rect
-                title = win32gui.GetWindowText(hwnd)
-                width = rect[2] - rect[0]
-                height = rect[3] - rect[1]
-                
-                is_login_window = is_login(hwnd)
-                
-                break
-        except:
-            pass
-        
-        time.sleep(1)
-        if i % 5 == 0:
-            print(f"Searching for login window... ({i}/30)")
-
+    while time.monotonic() < deadline:
+        control.checkpoint()
+        if main_window():
+            log.info('Login: existing HI-TOPS main confirmed')
+            return True
+        for candidate, _, _ in roi_helpers.application_windows():
+            try:
+                if is_login(candidate):
+                    hwnd = candidate
+                    break
+            except Exception:
+                continue
+        if hwnd:
+            break
+        time.sleep(0.3)
     if not hwnd:
-        print("Hitops window (Process ID) not found after 30 seconds.")
-        # Fallback to title search just in case
-        target_titles = ["Login", "HITOPS", "Hitops3"]
-        hwnd, title = get_app_window(target_titles)
-        if not hwnd:
-            return False
-
-    print(f"Target Window Found: '{title}' ({hwnd})")
-
-    if is_login_window or "login" in title.lower():
-        print("Proceeding with authentication.")
-        
-        # 1. Activate Window
-        try:
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            win32gui.SetForegroundWindow(hwnd)
-        except Exception as e:
-            print(f"Window activation warning: {e}")
-            return False
-        
-        time.sleep(0.1)
-
-        if win32gui.GetForegroundWindow() != hwnd:
-            return False
-
-        control.bind_window(hwnd)
-
-        # 2. Click Center to Ensure Focus
-        # Refresh rect after restore to get actual coordinates
-        try:
-             target_rect = win32gui.GetWindowRect(hwnd)
-        except Exception as e:
-             print(f"Failed to refresh window rect: {e}")
-
-        if target_rect:
-             cx = target_rect[0] + (target_rect[2] - target_rect[0]) // 2
-             cy = target_rect[1] + (target_rect[3] - target_rect[1]) // 2
-             print(f"Clicking window center to focus: {cx}, {cy}")
-             try:
-                 pyautogui.click(cx, cy)
-             except Exception as e:
-                 print(f"Click failed: {e}")
-             time.sleep(0.1)
-
-        if win32gui.GetForegroundWindow() != hwnd:
-            return False
-
-        # 3. Type Password
-        print("Typing password...")
-        # Clear field (Ctrl+A only, typing overwrites) 
-        # Deleted 'delete' key press to prevent accidental file deletion on Desktop
-        pyautogui.hotkey('ctrl', 'a')
-        time.sleep(0.1)
-
-        # Type Password
-        pyautogui.write(password, interval=0.01)
-        time.sleep(0.1)
-        
-        pyautogui.press('enter')
-        print("Login credentials submitted.")
-        
-        # 4. Wait for Main Window to Load
-        print("Waiting for Main Window to load...")
-        for k in range(100):
-            # Try broader search
-            main_hwnd, main_title = get_app_window(["Maintenance", "Repair System", "HITOPS", "HPNT", "Hi-Tops", "Hyundai"]) 
-            if main_hwnd:
-                 # Check if title changed from Login
-                 if not is_login(main_hwnd):
-                     print(f"Main Window Loaded: {main_title}")
-                     return True
-            time.sleep(0.3)
-            if k % 10 == 0:
-                print(f"Waiting for Hitops Main Window... ({k}/100)")
-                
-        print("Main Window not detected after login timeout.")
+        log.error('Login: no login or main window appeared')
         return False
 
+    # Retry activation without resubmitting credentials. The user/app may already
+    # be completing login while the old login handle disappears.
+    control.stage('로그인 창 활성화 중')
+    for attempt in range(3):
+        if main_window():
+            return True
+        if not win32gui.IsWindow(hwnd):
+            return wait_main()
+        if force_activate_window(hwnd):
+            break
+        log.warning('Login activation pending attempt=%s hwnd=%s', attempt + 1, hwnd)
+        time.sleep(0.3)
     else:
-        print("Detected window does not appear to be the Login screen. Assuming already logged in.")
+        log.warning('Login activation unavailable; waiting for main without sending credentials')
+        return wait_main()
+
+    if main_window():
         return True
+    try:
+        if not win32gui.IsWindow(hwnd) or not is_login(hwnd):
+            return wait_main()
+        if win32gui.GetForegroundWindow() != hwnd:
+            log.warning('Login focus changed before input; waiting for main')
+            return wait_main()
+        control.bind_window(hwnd)
+        rect = win32gui.GetWindowRect(hwnd)
+        pyautogui.click((rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2)
+        time.sleep(0.1)
+        if win32gui.GetForegroundWindow() != hwnd:
+            log.warning('Login focus changed after field click; waiting for main')
+            return wait_main()
+        pyautogui.hotkey('ctrl', 'a')
+        pyautogui.write(password, interval=0.01)
+        pyautogui.press('enter')
+        log.info('Login submission sent once; awaiting main window')
+    except Exception as exc:
+        # Never log credential text or exception messages that might contain it.
+        log.warning('Login input failed type=%s; awaiting main without resubmission', type(exc).__name__)
+    return wait_main()

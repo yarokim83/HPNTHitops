@@ -136,7 +136,7 @@ class NavigationTests(unittest.TestCase):
                 calls.append(label)
                 return (10, 20)
             return (30, 40) if len(calls) == 2 else None
-        mod = nav('open_monitoring', legacy=SimpleNamespace(ensure_app_ready=lambda: True),
+        mod = nav('open_monitoring', legacy=SimpleNamespace(ensure_app_ready=lambda: True, login_manager=SimpleNamespace(main_window=lambda: 1)),
                   roi_helpers=SimpleNamespace(get_hitops_window_rect=lambda: (None, 1)),
                   win32gui=SimpleNamespace(GetWindowRect=lambda h: (0, 0, 800, 600)),
                   error_dialog=lambda: None, activate=lambda h: True, find_item=find,
@@ -146,7 +146,7 @@ class NavigationTests(unittest.TestCase):
 
     def test_click_timeout_does_not_launch_duplicate_windows(self):
         mouse = Mock(return_value=True)
-        mod = nav('open_monitoring', legacy=SimpleNamespace(ensure_app_ready=lambda: True),
+        mod = nav('open_monitoring', legacy=SimpleNamespace(ensure_app_ready=lambda: True, login_manager=SimpleNamespace(main_window=lambda: 1)),
                   roi_helpers=SimpleNamespace(get_hitops_window_rect=lambda: (None, 1)),
                   win32gui=SimpleNamespace(GetWindowRect=lambda h: (0, 0, 800, 600)),
                   error_dialog=lambda: None, activate=lambda h: True,

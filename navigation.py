@@ -117,7 +117,10 @@ def open_monitoring(target, finder):
     if not legacy.ensure_app_ready():
         fail('HI-TOPS initialization failed')
         return None
-    _, hwnd = roi_helpers.get_hitops_window_rect()
+    hwnd = legacy.login_manager.main_window()
+    if not hwnd:
+        fail('HI-TOPS main disappeared after login')
+        return None
     for attempt in range(3):
         log.info('Monitoring -> %s attempt=%d hwnd=%s', target, attempt + 1, hwnd)
         if error_dialog() or not activate(hwnd):
