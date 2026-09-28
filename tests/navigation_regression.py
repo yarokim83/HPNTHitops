@@ -65,6 +65,35 @@ class WindowTests(unittest.TestCase):
 
 
 class NavigationTests(unittest.TestCase):
+    def test_maintenance_recovers_when_main_reclaims_focus(self):
+        api = Mock()
+        api.GetForegroundWindow.side_effect = [1, 2, 2, 2]
+        api.IsIconic.return_value = False
+        mod = nav('stable_maintenance', win32gui=api,
+                  roi_helpers=SimpleNamespace(get_hitops_window_rect=lambda: (None, 1)),
+                  activate=Mock(return_value=True))
+        self.assertTrue(mod.stable_maintenance(2))
+        mod.activate.assert_called_once_with(2)
+
+    def test_maintenance_never_steals_focus_from_unrelated_app(self):
+        api = Mock()
+        api.GetForegroundWindow.return_value = 99
+        mod = nav('stable_maintenance', win32gui=api,
+                  roi_helpers=SimpleNamespace(get_hitops_window_rect=lambda: (None, 1)),
+                  activate=Mock())
+        self.assertFalse(mod.stable_maintenance(2))
+        mod.activate.assert_not_called()
+
+    def test_maintenance_lookup_includes_hidden_existing_window(self):
+        api = Mock()
+        api.GetWindowRect.return_value = (0, 0, 800, 600)
+        api.GetClassName.return_value = 'WindowsForms10.Window'
+        windows = Mock(return_value=[(2, 'Maintenance & Repair System', '')])
+        mod = functions('roi_helpers.py', '_role', '_window_for_role',
+                        win32gui=api, application_windows=windows)
+        self.assertEqual(mod._window_for_role('maintenance')[1], 2)
+        windows.assert_called_once_with(include_hidden=True)
+
     def test_crop_restores_negative_monitor_coordinates(self):
         shot = Mock(width=3840, height=1080)
         api = SimpleNamespace(GetForegroundWindow=lambda: 1,

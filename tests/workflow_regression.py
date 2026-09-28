@@ -17,9 +17,11 @@ class WorkflowTests(unittest.TestCase):
         navigation.activate.return_value = True
         navigation.mouse.return_value = True
         navigation.find_item.return_value = (10, 20)
+        api = Mock()
+        api.GetForegroundWindow.return_value = 7
         mod = functions('menu_navigator.py', 'click_pr_menu', control=Mock(),
                         roi_helpers=SimpleNamespace(get_maintenance_window_rect=lambda: (None, 7)),
-                        win32gui=Mock(), ensure_app_ready=Mock(),
+                        win32gui=api, ensure_app_ready=Mock(),
                         time=SimpleNamespace(monotonic=lambda: 0, sleep=Mock()))
         with patch.dict(sys.modules, navigation=navigation):
             self.assertTrue(mod.click_pr_menu())

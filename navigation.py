@@ -50,6 +50,35 @@ def activate(hwnd):
     return success
 
 
+def stable_maintenance(hwnd, timeout=4):
+    """Recover only a handoff back to HI-TOPS; never fight unrelated apps."""
+    deadline = time.monotonic() + timeout
+    stable_since = None
+    retries = 0
+    while time.monotonic() < deadline:
+        control.checkpoint()
+        if not win32gui.IsWindow(hwnd) or not win32gui.IsWindowEnabled(hwnd):
+            return fail('Maintenance unavailable or blocked by dialog')
+        foreground = win32gui.GetForegroundWindow()
+        if foreground == hwnd and not win32gui.IsIconic(hwnd):
+            if stable_since is None:
+                stable_since = time.monotonic()
+            if time.monotonic() - stable_since >= 0.8:
+                control.bind_window(hwnd)
+                return True
+        else:
+            stable_since = None
+            _, main = roi_helpers.get_hitops_window_rect()
+            if foreground not in (hwnd, main) or retries >= 2:
+                return fail('Maintenance focus not stable; leaving foreground unchanged')
+            retries += 1
+            log.info('Maintenance focus recovery hwnd=%s from=%s attempt=%s', hwnd, foreground, retries)
+            if not activate(hwnd):
+                return fail('Maintenance focus recovery failed')
+        time.sleep(0.15)
+    return fail('Maintenance focus stability timed out')
+
+
 def find_item(hwnd, asset, label, deadline=None):
     """Search only the visible target window, preserving negative screen origins."""
     control.checkpoint()

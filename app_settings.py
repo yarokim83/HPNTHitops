@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 
-VERSION = '1.1.4'
+VERSION = '1.1.5'
 DATA_DIR = Path(os.getenv('LOCALAPPDATA') or Path.home()) / 'PRMaker'
 INSTALL_EXE = DATA_DIR / 'app' / 'PRMakerWidget.exe'
 

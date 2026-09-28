@@ -106,3 +106,12 @@ No end-to-end PR creation was performed as part of these checks.
 - Scan all HI-TOPS windows so a lingering login window cannot hide the ready main
   window; use that verified main handle for maximizing and Monitoring navigation.
 - Persist login activation, submission and wait-timeout diagnostics without credentials.
+
+## 1.1.5 follow-up
+
+- Include hidden M&R top-level windows from the verified HI-TOPS installation
+  when looking for an existing instance.
+- Confirm stable M&R foreground for 0.8 seconds; recover a transition back to
+  HI-TOPS at most twice per bounded wait. Do not steal focus from unrelated apps.
+- Recheck focus after Inventory detection and discard stale coordinates before
+  attempting recovery and a fresh search.

@@ -1105,8 +1105,8 @@ def click_pr_menu(ready=False):
     control.stage('Maintenance 창 복원·활성화 중')
     if not win32gui.IsWindowEnabled(main_hwnd):
         return navigation.fail('PR: Maintenance disabled by an open dialog')
-    if not navigation.activate(main_hwnd):
-        return navigation.fail('PR: cannot activate Maintenance window')
+    if not navigation.activate(main_hwnd) or not navigation.stable_maintenance(main_hwnd):
+        return navigation.fail('PR: cannot stably activate Maintenance window')
     for asset, label, stage in (
         ('inventory_menu.png', 'Inventory', 'Inventory 메뉴 여는 중'),
         ('purchase_request_menu.png', 'Purchase Request', 'Purchase Request 항목 여는 중'),
@@ -1115,10 +1115,14 @@ def click_pr_menu(ready=False):
         deadline = time.monotonic() + 10
         point = None
         while time.monotonic() < deadline:
+            if label == 'Inventory' and win32gui.GetForegroundWindow() != main_hwnd:
+                if not navigation.stable_maintenance(main_hwnd):
+                    return False
             control.guard()
             point = navigation.find_item(main_hwnd, asset, label, deadline=deadline)
-            if point:
+            if point and win32gui.GetForegroundWindow() == main_hwnd:
                 break
+            point = None
             time.sleep(0.3)
         if not point:
             return navigation.fail('PR: menu item not found: ' + label)

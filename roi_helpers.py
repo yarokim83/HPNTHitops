@@ -49,11 +49,11 @@ def _is_application_path(path):
     return bool(path) and ntpath.normcase(ntpath.normpath(path)).startswith(root)
 
 
-def application_windows():
+def application_windows(include_hidden=False):
     """Visible top-level windows belonging to the configured HI-TOPS installation."""
     found = []
     def collect(hwnd, _):
-        if not win32gui.IsWindowVisible(hwnd):
+        if not include_hidden and not win32gui.IsWindowVisible(hwnd):
             return
         path = _process_path(hwnd)
         if _is_application_path(path):
@@ -76,7 +76,8 @@ def _role(title):
 
 
 def _window_for_role(role):
-    candidates = [(h, title) for h, title, _ in application_windows()
+    windows = application_windows(include_hidden=True) if role == 'maintenance' else application_windows()
+    candidates = [(h, title) for h, title, _ in windows
                   if _role(title) == role and win32gui.GetClassName(h) != '#32770']
     # Login may be a native dialog. Include it only for the main/login lookup.
     if role == 'main' and not candidates:
