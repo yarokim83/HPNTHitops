@@ -115,3 +115,14 @@ No end-to-end PR creation was performed as part of these checks.
   HI-TOPS at most twice per bounded wait. Do not steal focus from unrelated apps.
 - Recheck focus after Inventory detection and discard stale coordinates before
   attempting recovery and a fresh search.
+
+## 1.1.6 UI follow-up
+
+- Replace fixed window heights with measured content sizing, converting physical
+  widget requests into window-scaled geometry. Reflow after DPI or status changes.
+- Give account selection its own full-width row, separate form hints/actions,
+  highlight the expanded PR tab, and use an opaque background for readability.
+- Keep status and log/retry/stop controls in a fixed footer. Scroll the dock/form
+  when the monitor work area cannot fit the content. Enlarge the settings dialog.
+- Verified hidden widget/window scaling transitions and rendered footer bounds
+  at scaling factors 1, 1.6 and 2.4, including scrolling to the PR action.

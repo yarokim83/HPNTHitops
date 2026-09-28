@@ -1,5 +1,6 @@
 """PR Maker widget: visible task state, cancellation and verified PR entry."""
 import os
+import math
 import queue
 import sys
 import threading
@@ -78,7 +79,7 @@ class PRMakerWidget(ctk.CTk):
         self.overrideredirect(True)
         self.resizable(False, False)
         self.configure(fg_color=BG)
-        self.attributes('-alpha', 0.98)
+        self.attributes('-alpha', 1.0)
         self.is_running = False
         self.pr_visible = False
         self.cancel_event = threading.Event()
@@ -94,7 +95,13 @@ class PRMakerWidget(ctk.CTk):
         self.assets_dir = Path(__file__).parent / 'assets'
         self.icons = []
         self.tips = []
-        self.shell = ctk.CTkFrame(self, fg_color=BG, corner_radius=16, border_width=1,
+        self._resize_job = None
+        self._layout_signature = None
+        self.viewport = ctk.CTkScrollableFrame(self, fg_color=BG, corner_radius=10,
+                                                scrollbar_button_color=PANEL,
+                                                scrollbar_button_hover_color='#454B59')
+        self.viewport.pack(fill='both', expand=True, padx=2, pady=(2, 0))
+        self.shell = ctk.CTkFrame(self.viewport, fg_color=BG, corner_radius=16, border_width=1,
                                   border_color='#454B59')
         self.shell.pack(fill='both', expand=True, padx=1, pady=1)
         self.shell.grid_columnconfigure(0, weight=1)
@@ -128,56 +135,84 @@ class PRMakerWidget(ctk.CTk):
         dock.bind('<B1-Motion>', self.do_move)
 
         self.form = ctk.CTkFrame(self.shell, fg_color='transparent')
-        self.form.grid_columnconfigure(0, weight=3)
-        self.form.grid_columnconfigure(1, weight=2)
+        self.form.grid_columnconfigure(0, weight=1)
+        self.form.grid_columnconfigure(1, weight=0)
         self.desc_entry = ctk.CTkEntry(self.form, placeholder_text='PR 설명 (필수)', height=34)
-        self.desc_entry.grid(row=0, column=0, columnspan=3, sticky='ew', padx=4, pady=4)
+        ctk.CTkLabel(self.form, text='PR 설명 · 필수', anchor='w', text_color='#AAB4C7').grid(row=0, column=0, columnspan=2, sticky='ew', padx=4)
+        self.desc_entry.grid(row=1, column=0, columnspan=2, sticky='ew', padx=4, pady=(0, 6))
         recent = [c for c in self.preferences.get('recent_accounts', []) if c in ACCOUNT_CODES]
         self.account_choices = recent + [c for c in ACCOUNT_CODES if c not in recent]
         self.account_combo = ctk.CTkComboBox(self.form, values=self.account_choices, width=340, height=34)
-        self.account_combo.grid(row=1, column=0, sticky='ew', padx=4, pady=4)
+        ctk.CTkLabel(self.form, text='계정코드', anchor='w', text_color='#AAB4C7').grid(row=2, column=0, columnspan=2, sticky='ew', padx=4)
+        self.account_combo.grid(row=3, column=0, columnspan=2, sticky='ew', padx=4, pady=(0, 6))
         self.account_combo.set(recent[0] if recent else ACCOUNT_CODES[0])
         self.account_combo.bind('<KeyRelease>', self.filter_accounts)
         self.part_entry = ctk.CTkEntry(self.form, placeholder_text='Part No (선택·4자 이상)', height=34)
-        self.part_entry.grid(row=1, column=1, sticky='ew', padx=4, pady=4)
+        self.part_entry.grid(row=4, column=0, sticky='ew', padx=4, pady=6)
         self.unit_price_var = ctk.BooleanVar(value=False)
         self.unit_check = ctk.CTkCheckBox(self.form, text='단가계약', variable=self.unit_price_var, width=90)
-        self.unit_check.grid(row=1, column=2, padx=6)
+        self.unit_check.grid(row=4, column=1, padx=10)
         actions = ctk.CTkFrame(self.form, fg_color='transparent')
-        actions.grid(row=2, column=0, columnspan=3, sticky='ew', padx=4, pady=4)
+        actions.grid(row=6, column=0, columnspan=2, sticky='ew', padx=4, pady=(4, 10))
         self.clear_btn = ctk.CTkButton(actions, text='입력 지우기', width=100, fg_color=PANEL, command=self.clear_inputs)
         self.clear_btn.pack(side='left')
         self.run_btn = ctk.CTkButton(actions, text='▶ PR 입력', width=110, fg_color='#207E62', command=self.run_automation_thread)
         self.run_btn.pack(side='right')
-        ctk.CTkLabel(actions, text='입력 후 HI-TOPS에서 검토·저장', text_color='#AAB4C7').pack(side='right', padx=12)
-        self.status_frame = ctk.CTkFrame(self.shell, fg_color='transparent')
-        self.status_frame.grid(row=2, column=0, sticky='ew', padx=12, pady=(2, 8))
+        ctk.CTkLabel(self.form, text='입력 후 HI-TOPS에서 검토·저장해 주세요.', anchor='w',
+                     text_color='#AAB4C7').grid(row=5, column=0, columnspan=2, sticky='ew', padx=4)
+        self.status_frame = ctk.CTkFrame(self, fg_color=PANEL, corner_radius=10)
+        self.status_frame.pack(side='bottom', fill='x', padx=8, pady=8)
         self.status_frame.grid_columnconfigure(0, weight=1)
         self.status_label = ctk.CTkLabel(self.status_frame, text=self.progress_text, anchor='w',
                                         justify='left', wraplength=245, text_color=TEXT)
-        self.status_label.grid(row=0, column=0, sticky='ew')
+        self.status_label.grid(row=0, column=0, columnspan=3, sticky='ew', padx=10, pady=(8, 4))
         self.stop_btn = ctk.CTkButton(self.status_frame, text='■ 중지', width=72, state='disabled',
                                      fg_color='#9C3F48', command=self.cancel_task)
-        self.stop_btn.grid(row=0, column=1, padx=(5, 0))
+        self.stop_btn.grid(row=1, column=2, padx=(6, 10), pady=(2, 8))
         self.retry_btn = ctk.CTkButton(self.status_frame, text='다시 시도', width=82, state='disabled', command=self.retry)
-        self.retry_btn.grid(row=1, column=1, pady=(2, 0))
+        self.retry_btn.grid(row=1, column=1, padx=4, pady=(2, 8))
         self.log_btn = ctk.CTkButton(self.status_frame, text='로그 열기', width=85, fg_color=PANEL, command=self.open_log)
-        self.log_btn.grid(row=1, column=0, sticky='w', pady=(2, 0))
+        self.log_btn.grid(row=1, column=0, sticky='w', padx=10, pady=(2, 8))
         self.bind('<Escape>', lambda e: self.cancel_task() if self.is_running else self.withdraw())
         self.bind('<Control-Return>', lambda e: self.run_automation_thread())
         self.protocol('WM_DELETE_WINDOW', self.request_exit)
         self.resize()
         self.after(100, self.poll_events)
 
+    def _set_scaling(self, new_widget_scaling, new_window_scaling):
+        super()._set_scaling(new_widget_scaling, new_window_scaling)
+        if hasattr(self, 'status_label'):
+            self.schedule_resize()
+
+    def schedule_resize(self):
+        if self._resize_job is None:
+            self._resize_job = self.after(80, self.resize)
+
     def resize(self):
-        self.geometry('760x280' if self.pr_visible else '380x150')
-        self.status_label.configure(wraplength=620 if self.pr_visible else 245)
+        self._resize_job = None
+        if not self.winfo_exists():
+            return
+        self.update_idletasks()
+        widget_scale = self.shell._get_widget_scaling()
+        window_scale = self._get_window_scaling()
+        monitor = win32api.MonitorFromPoint((self.winfo_x(), self.winfo_y()), win32con.MONITOR_DEFAULTTONEAREST)
+        left, top, right, bottom = win32api.GetMonitorInfo(monitor)['Work']
+        available_w, available_h = right - left - 16, bottom - top - 16
+        # Requested sizes are physical pixels; geometry() accepts window-scaled units.
+        width_px = min(available_w, round((640 if self.pr_visible else 400) * widget_scale))
+        self.status_label.configure(wraplength=max(180, width_px / widget_scale - 44))
+        self.update_idletasks()
+        height_px = (self.shell.winfo_reqheight() + self.status_frame.winfo_reqheight()
+                     + math.ceil(48 * widget_scale))
+        height_px = min(available_h, height_px)
+        self.geometry(f'{math.ceil(width_px / window_scale)}x{math.ceil(height_px / window_scale)}')
         window_position.place(self, self.winfo_x(), self.winfo_y())
 
     def toggle_pr_section(self):
         if self.is_running:
             return
         self.pr_visible = not self.pr_visible
+        self.task_buttons[0].configure(fg_color=BLUE if self.pr_visible else PANEL)
         if self.pr_visible:
             self.form.grid(row=1, column=0, sticky='ew', padx=10, pady=3)
         else:
@@ -301,6 +336,12 @@ class PRMakerWidget(ctk.CTk):
                 text = '중지 요청됨 · 진행 중인 인식 작업 종료 대기'
             text += f' · {int(time.monotonic() - self.started_at)}초'
         self.status_label.configure(text=text)
+        signature = (self.pr_visible, self.shell._get_widget_scaling(),
+                     self._get_window_scaling(), self.status_label.winfo_reqheight(),
+                     self.shell.winfo_reqheight())
+        if signature != self._layout_signature:
+            self._layout_signature = signature
+            self.schedule_resize()
         self.after(100, self.poll_events)
 
     def cancel_task(self):
@@ -368,7 +409,7 @@ class PRMakerWidget(ctk.CTk):
             return
         dialog = self.dialog = ctk.CTkToplevel(self)
         dialog.title('PR Maker 설정 · ' + settings.VERSION)
-        dialog.geometry('380x360')
+        dialog.geometry('400x400')
         dialog.resizable(False, False)
         dialog.attributes('-topmost', True)
         startup = ctk.BooleanVar(value=os.path.exists(self.get_startup_path()))

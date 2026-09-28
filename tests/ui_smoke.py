@@ -3,8 +3,8 @@ import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import customtkinter as ctk
 import PRMakerWidget as ui
+import customtkinter as ctk
 
 original = ctk.CTk.__init__
 def hidden(self, *args, **kwargs):
@@ -17,14 +17,23 @@ with patch.object(ctk.CTk, '__init__', hidden), patch.object(ui.settings, 'load'
         app.update_idletasks()
         scale = app.shell._get_widget_scaling()
         print('DPI scale:', scale)
-        print('Mini requested:', app.shell.winfo_reqwidth(), app.shell.winfo_reqheight())
-        assert app.shell.winfo_reqwidth() <= 380 * scale
-        assert app.shell.winfo_reqheight() <= 150 * scale
         app.toggle_pr_section()
         app.update_idletasks()
-        print('Expanded requested:', app.shell.winfo_reqwidth(), app.shell.winfo_reqheight())
-        assert app.shell.winfo_reqwidth() <= 760 * scale
-        assert app.shell.winfo_reqheight() <= 280 * scale
+        app.resize()
+        assert app.account_combo.grid_info()['columnspan'] == 2
+        assert app.status_label.grid_info()['columnspan'] == 3
+        # Simulate independent widget/window scale changes, including the mismatch
+        # that previously clipped the bottom of the fixed-height window.
+        for widget_factor, window_factor in ((1, 1), (1.25, 1), (1.5, 1.5), (2, 1.5), (2.4, 2.4), (1, 1)):
+            ctk.set_widget_scaling(widget_factor)
+            ctk.set_window_scaling(window_factor)
+            app.update_idletasks()
+            app.resize()
+            app.update_idletasks()
+            physical_height = app._current_height * app._get_window_scaling()
+            assert physical_height > app.status_frame.winfo_reqheight() + 60
+            assert app.status_frame.winfo_reqwidth() <= app._current_width * app._get_window_scaling()
+        print('Scale-transition layout checks passed')
         app.desc_entry.insert(0, ' ')
         with patch.object(app, 'run_task') as run:
             app.run_automation_thread()
@@ -58,7 +67,7 @@ with patch.object(ctk.CTk, '__init__', hidden), patch.object(ui.settings, 'load'
                 current = next(entry for entry in entries if entry.get() == 'CURRENT-DEMO')
                 assert current.cget('show') == ''
                 assert current.cget('state') == 'disabled'
-                assert app.dialog.winfo_reqheight() <= 360 * scale
+                assert app.dialog.winfo_reqheight() <= 400 * app.dialog._get_window_scaling()
                 app.dialog.destroy()
         app.events.put(('exit', None))
         with patch.object(app, 'finish_exit') as exit_app, patch.object(app, 'after') as reschedule:
