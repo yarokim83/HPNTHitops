@@ -194,8 +194,8 @@ def ensure_app_ready():
         return False
     print("Login successful.")
     
-    # Step 3: Maximize & Foreground
-    return ensure_hitops_maximized()
+    # perform_login has already verified a stable, maximized foreground main.
+    return True
 
 def run_mc_sequence():
     from navigation import run_mc
@@ -208,15 +208,7 @@ def click_rcc_menu():
 
 
 def ensure_hitops_maximized():
-    hwnd = login_manager.main_window()
-    if not hwnd:
-        return False
-    try:
-        win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
-        return force_activate_window(hwnd)
-    except Exception as exc:
-        print(f"Window maximization failed: {exc}")
-        return False
+    return login_manager.wait_main()
 
 
 def click_mc_menu():

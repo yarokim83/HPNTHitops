@@ -51,19 +51,45 @@ def main_window():
 
 
 def wait_main(timeout=30):
+    """Require a stable main handle, then confirmed foreground after activation."""
     import logging
+    from menu_navigator import force_activate_window
     log = logging.getLogger('PRMaker')
-    control.stage('로그인 후 HI-TOPS 메인 창 기다리는 중')
+    control.stage('HI-TOPS 메인 창 준비·활성화 확인 중')
     deadline = time.monotonic() + timeout
+    candidate, seen_since, active_since = None, None, None
     while time.monotonic() < deadline:
         control.checkpoint()
         hwnd = main_window()
-        if hwnd:
-            log.info('Login main window ready hwnd=%s', hwnd)
-            return True
-        time.sleep(0.3)
-    log.error('Login main wait timed out; foreground=%s windows=%s',
-              win32gui.GetForegroundWindow(), roi_helpers.application_windows())
+        now = time.monotonic()
+        if hwnd != candidate:
+            if candidate:
+                log.info('Login main candidate changed old=%s new=%s; restarting stability wait', candidate, hwnd)
+            candidate, seen_since, active_since = hwnd, now, None
+        if hwnd and seen_since is not None and now - seen_since >= 1.2:
+            if active_since is None:
+                try:
+                    win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
+                    if force_activate_window(hwnd):
+                        # The handle may be destroyed/replaced during activation.
+                        if main_window() == hwnd and win32gui.GetForegroundWindow() == hwnd:
+                            active_since = time.monotonic()
+                    else:
+                        seen_since = time.monotonic()
+                except Exception as exc:
+                    log.warning('Main activation pending hwnd=%s type=%s', hwnd, type(exc).__name__)
+                    candidate, seen_since, active_since = None, None, None
+            elif win32gui.GetForegroundWindow() != hwnd:
+                active_since = None
+                seen_since = now
+                log.info('Main foreground not stable hwnd=%s; continuing readiness wait', hwnd)
+            elif now - active_since >= 0.6:
+                control.bind_window(hwnd)
+                log.info('Login main stable and active hwnd=%s', hwnd)
+                return True
+        time.sleep(0.2)
+    log.error('Login main readiness timed out; candidate=%s foreground=%s windows=%s',
+              candidate, win32gui.GetForegroundWindow(), roi_helpers.application_windows())
     return False
 
 
@@ -76,8 +102,8 @@ def perform_login(password):
     while time.monotonic() < deadline:
         control.checkpoint()
         if main_window():
-            log.info('Login: existing HI-TOPS main confirmed')
-            return True
+            log.info('Login: main candidate found; verifying stability')
+            return wait_main()
         for candidate, _, _ in roi_helpers.application_windows():
             try:
                 if is_login(candidate):
@@ -97,7 +123,7 @@ def perform_login(password):
     control.stage('로그인 창 활성화 중')
     for attempt in range(3):
         if main_window():
-            return True
+            return wait_main()
         if not win32gui.IsWindow(hwnd):
             return wait_main()
         if force_activate_window(hwnd):
@@ -109,7 +135,7 @@ def perform_login(password):
         return wait_main()
 
     if main_window():
-        return True
+        return wait_main()
     try:
         if not win32gui.IsWindow(hwnd) or not is_login(hwnd):
             return wait_main()

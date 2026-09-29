@@ -126,3 +126,13 @@ No end-to-end PR creation was performed as part of these checks.
   when the monitor work area cannot fit the content. Enlarge the settings dialog.
 - Verified hidden widget/window scaling transitions and rendered footer bounds
   at scaling factors 1, 1.6 and 2.4, including scrolling to the PR action.
+
+## 1.1.7 follow-up
+
+- Treat a detected main window as a candidate until the same handle survives
+  1.2 seconds, maximization/activation succeeds, and foreground remains stable
+  for another 0.6 seconds. Reset readiness on handle replacement/disappearance.
+- Use this check for already-running and newly logged-in HI-TOPS alike. Remove
+  the immediate one-shot main relookup that could abort after successful login.
+- Retry only readiness/activation within the 30-second deadline; never resubmit
+  credentials as part of readiness recovery.
