@@ -35,4 +35,37 @@ class AddButtonTests(unittest.TestCase):
         with patch.object(add, 'win32gui', api), patch.object(add, 'monitor_scale', return_value=1.5), \
              patch.object(add.ImageGrab, 'grab') as grab, patch.object(add, 'find_plus', return_value=(120, 24, .98, 1.5)):
             self.assertEqual(add.locate(1)[0], (-1680, 74))
-            grab.assert_called_once_with(bbox=(-1800, 50, -1350, 98), all_screens=True)
+            self.assertEqual(grab.call_count, 2)
+            grab.assert_called_with(bbox=(-1800, 50, -1350, 146), all_screens=True)
+
+    def test_delayed_paint_requires_two_stable_frames(self):
+        api = Mock()
+        api.IsIconic.return_value = False
+        api.ClientToScreen.return_value = (100, 100)
+        api.GetClientRect.return_value = (0, 0, 1000, 600)
+        matches = [None, (50,20,.98,1), None, (60,20,.98,1), (60,20,.98,1)]
+        with patch.object(add, 'win32gui', api), patch.object(add, 'monitor_scale', return_value=1), \
+             patch.object(add.ImageGrab,'grab'), patch.object(add, 'find_plus', side_effect=matches) as find, \
+             patch.object(add.control,'sleep'):
+            self.assertEqual(add.locate(1)[0], (160, 120))
+            self.assertEqual(find.call_count, 5)
+
+    def test_missing_plus_times_out_without_click(self):
+        api = Mock()
+        api.IsIconic.return_value = False
+        api.ClientToScreen.return_value = (0, 0)
+        api.GetClientRect.return_value = (0, 0, 1000, 600)
+        ticks = iter([0, 1, 2, 3, 7])
+        with patch.object(add, 'win32gui', api), patch.object(add, 'monitor_scale', return_value=1), \
+             patch.object(add.ImageGrab,'grab'), patch.object(add, 'find_plus', return_value=None), \
+             patch.object(add.control,'sleep'), patch.object(add.control.Clock,'monotonic', side_effect=lambda: next(ticks)):
+            with self.assertRaises(RuntimeError):
+                add.locate(1)
+
+    def test_plus_below_old_32px_crop_is_detected(self):
+        with Image.open(Path(__file__).parent / 'pr_toolbar_fixture.png') as image:
+            sample = Image.new('RGB',(300,64),'#dddddd')
+            sample.paste(image,(0,12))
+        match = add.find_plus(sample)
+        self.assertIsNotNone(match)
+        self.assertAlmostEqual(match[1],27.5,delta=1)

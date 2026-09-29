@@ -136,3 +136,11 @@ No end-to-end PR creation was performed as part of these checks.
   the immediate one-shot main relookup that could abort after successful login.
 - Retry only readiness/activation within the 30-second deadline; never resubmit
   credentials as part of readiness recovery.
+
+## 1.1.8 follow-up
+
+- Wait up to six seconds for the PR Add icon to paint; require matching absolute
+  positions in two consecutive captures before the existing single-click path.
+- Allow 64 scaled pixels of client toolbar height instead of 32, so padding
+  does not truncate the 31-pixel template. Keep colour/shape thresholds intact.
+- Record detection attempts, capture bounds and DPI on success/timeout.

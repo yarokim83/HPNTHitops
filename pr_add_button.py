@@ -1,4 +1,5 @@
 """Colour-aware plus matching restricted to the PR client toolbar."""
+import logging
 from pathlib import Path
 import cv2
 import numpy as np
@@ -32,18 +33,47 @@ def find_plus(image, preferred=1):
     return best
 
 
-def locate(hwnd):
-    control.guard()
-    if not win32gui.IsWindowEnabled(hwnd) or win32gui.IsIconic(hwnd):
-        raise RuntimeError('PR 목록 창이 입력 가능한 상태가 아닙니다.')
-    scale = monitor_scale(hwnd)
-    left, top = win32gui.ClientToScreen(hwnd, (0, 0))
-    _, _, width, height = win32gui.GetClientRect(hwnd)
-    # Only the first toolbar row, excluding filters and PR/Part tables.
-    box = (left, top, left + min(width, round(300 * scale)),
-           top + min(height, round(32 * scale)))
-    match = find_plus(ImageGrab.grab(bbox=box, all_screens=True), scale)
-    if match is None:
-        raise RuntimeError('상단 도구모음의 초록색 + 버튼을 확인하지 못했습니다. 클릭하지 않았습니다.')
-    x, y, score, matched_scale = match
-    return (left + x, top + y), score, matched_scale
+def locate(hwnd, timeout=6):
+    """Wait for painting/layout to settle; never send input while searching."""
+    log = logging.getLogger('PRMaker')
+    deadline = control.Clock.monotonic() + timeout
+    previous = None
+    attempts = 0
+    box, scale = None, None
+    while control.Clock.monotonic() < deadline:
+        control.guard()
+        if not win32gui.IsWindow(hwnd):
+            raise RuntimeError('PR 목록 창이 닫혔습니다. 클릭하지 않았습니다.')
+        if not win32gui.IsWindowEnabled(hwnd) or win32gui.IsIconic(hwnd):
+            previous = None
+            control.sleep(0.2)
+            continue
+        scale = monitor_scale(hwnd)
+        left, top = win32gui.ClientToScreen(hwnd, (0, 0))
+        _, _, width, height = win32gui.GetClientRect(hwnd)
+        # Allow padding/two toolbar rows at different DPI, without scanning tables.
+        box = (left, top, left + min(width, round(300 * scale)),
+               top + min(height, round(64 * scale)))
+        if width <= 0 or height <= 0:
+            previous = None
+            control.sleep(0.2)
+            continue
+        attempts += 1
+        match = find_plus(ImageGrab.grab(bbox=box, all_screens=True), scale)
+        control.guard()
+        if match is not None:
+            x, y, score, matched_scale = match
+            target = (left + x, top + y)
+            # Repaint or movement may change coordinates: require two frames at
+            # the same absolute position before handing a single click to caller.
+            if previous and previous[0] == box and all(abs(a-b) <= 2 for a,b in zip(previous[1], target)):
+                log.info('PR Add stable detection hwnd=%s attempts=%s bbox=%s dpi=%.3f score=%.3f',
+                         hwnd, attempts, box, scale, score)
+                return target, score, matched_scale
+            previous = (box, target)
+        else:
+            previous = None
+        control.sleep(0.2)
+    log.warning('PR Add detection timed out hwnd=%s attempts=%s bbox=%s dpi=%s foreground=%s',
+                hwnd, attempts, box, scale, win32gui.GetForegroundWindow())
+    raise RuntimeError('상단 초록색 + 버튼을 6초 동안 확인하지 못했습니다. 클릭하지 않았습니다.')
